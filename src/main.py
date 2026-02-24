@@ -1,35 +1,34 @@
 from datetime import date, timedelta
-import json
+from src.kiwi_fetch import fetch_round_trip_window
 
-from src.flights_fetch import search_return
-
+def _first_time(it, leg_key):
+    leg = it.get(leg_key) or {}
+    segs = leg.get("sectorSegments") or []
+    if not segs:
+        return None
+    seg = (segs[0] or {}).get("segment") or {}
+    return ((seg.get("source") or {}).get("localTime"))
 
 def main():
-    today = date.today()
-    end = today + timedelta(weeks=5)
+    start = date.today()
+    end = start + timedelta(weeks=5)
 
-    data = search_return(
-        origin_sky_id="AMS",
-        destination_sky_id="BCN",
-        departure_start=today,
-        departure_end=end,
-        return_start=today,
-        return_end=end,
-        limit=5,
-        stops=0,
-        currency="EUR",
-        locale="en-US",
-        market="US",
-        sort="PRICE",
-        outbound_departure_times="17,24",
-        inbound_departure_times="17,24",
+    data = fetch_round_trip_window(
+        source="City:amsterdam_nl",
+        destination="City:barcelona_es",
+        start_date=start,
+        end_date=end,
+        limit=20,
+        max_stops=0,
     )
 
-    print("Top-level keys:", list(data.keys()))
-    s = json.dumps(data, ensure_ascii=False)
-    print("JSON first 2500 chars:")
-    print(s[:2500])
-
+    itins = data.get("itineraries", []) or []
+    print("itineraries:", len(itins))
+    if itins:
+        print("OUT first:", _first_time(itins[0], "outbound"))
+        print("IN  first:", _first_time(itins[0], "inbound"))
+        print("OUT last :", _first_time(itins[-1], "outbound"))
+        print("IN  last :", _first_time(itins[-1], "inbound"))
 
 if __name__ == "__main__":
     main()
