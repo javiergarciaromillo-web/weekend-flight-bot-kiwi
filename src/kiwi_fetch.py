@@ -1,14 +1,15 @@
 import os
 import requests
 
+API_URL = "https://kiwi-com-cheap-flights.p.rapidapi.com/round-trip"
+API_HOST = "kiwi-com-cheap-flights.p.rapidapi.com"
 
-def test_call():
-    url = "https://kiwi-com-cheap-flights.p.rapidapi.com/round-trip"
 
+def fetch_round_trip(source: str, destination: str, currency: str = "EUR", limit: int = 20) -> dict:
     querystring = {
-        "source": "City:amsterdam_nl",
-        "destination": "City:barcelona_es",
-        "currency": "EUR",
+        "source": source,
+        "destination": destination,
+        "currency": currency,
         "locale": "en",
         "adults": "1",
         "children": "0",
@@ -19,20 +20,14 @@ def test_call():
         "sortBy": "QUALITY",
         "sortOrder": "ASCENDING",
         "transportTypes": "FLIGHT",
-        "limit": "5"
+        "limit": str(limit),
     }
 
     headers = {
-        "x-rapidapi-key": os.environ["RAPIDAPI_KEY"],
-        "x-rapidapi-host": "kiwi-com-cheap-flights.p.rapidapi.com"
+        "X-RapidAPI-Key": os.environ["RAPIDAPI_KEY"],
+        "X-RapidAPI-Host": API_HOST,
     }
 
-    response = requests.get(
-        url,
-        headers=headers,
-        params=querystring,
-        timeout=30
-    )
-
-    response.raise_for_status()
-    return response.json()
+    r = requests.get(API_URL, headers=headers, params=querystring, timeout=30)
+    r.raise_for_status()
+    return r.json()
