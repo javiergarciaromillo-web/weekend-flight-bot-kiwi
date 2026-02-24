@@ -2,6 +2,11 @@ from src.kiwi_fetch import fetch_round_trip
 from src.history import append_row
 
 
+ORIGINS = {
+    "AMS": "City:amsterdam_nl",
+    "RTM": "City:rotterdam_nl",
+}
+
 PATTERNS = {
     "fri_sun": 2,
     "thu_sun": 3,
@@ -34,33 +39,34 @@ def get_best(itineraries: list[dict]) -> tuple[float | None, str | None]:
 
 def main():
     currency = "EUR"
-    source = "City:amsterdam_nl"
     destination = "City:barcelona_es"
 
-    for pattern_name, nights in PATTERNS.items():
-        print(f"\nRunning pattern: {pattern_name} ({nights} nights)")
+    for origin_code, origin in ORIGINS.items():
+        for pattern_name, nights in PATTERNS.items():
+            print(f"\nOrigin: {origin_code} | pattern: {pattern_name} ({nights} nights)")
 
-        data = fetch_round_trip(
-            source=source,
-            destination=destination,
-            nights=nights,
-            currency=currency,
-            limit=20,
-        )
+            data = fetch_round_trip(
+                source=origin,
+                destination=destination,
+                nights=nights,
+                currency=currency,
+                limit=20,
+            )
 
-        itineraries = data.get("itineraries", [])
-        print("Found itineraries:", len(itineraries))
+            itineraries = data.get("itineraries", [])
+            print("Found itineraries:", len(itineraries))
 
-        best_price, best_id = get_best(itineraries)
-        print("Best:", best_price, currency)
+            best_price, best_id = get_best(itineraries)
+            print("Best:", best_price, currency)
 
-        append_row(
-            source=f"{source}_{pattern_name}",
-            destination=destination,
-            currency=currency,
-            best_price=best_price,
-            best_itinerary_id=best_id,
-        )
+            append_row(
+                origin=origin_code,
+                pattern=pattern_name,
+                destination="BCN",
+                currency=currency,
+                best_price=best_price,
+                best_itinerary_id=best_id,
+            )
 
 
 if __name__ == "__main__":
