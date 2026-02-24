@@ -1,6 +1,8 @@
-name: Flight monitor (test)
+name: Weekend flight monitor
 
 on:
+  schedule:
+    - cron: "30 6 * * *"   # 06:30 UTC cada día
   workflow_dispatch:
 
 permissions:
@@ -24,13 +26,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run flight monitor
+      - name: Run weekend monitor + send email
         env:
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           python -m src.main
 
-      - name: Commit updated history
+      - name: Commit changes (if any CSV/log updates)
         run: |
           if git diff --quiet; then
             echo "No changes to commit"
@@ -38,6 +45,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/history.csv
-          git commit -m "update: append flight history"
+          git add .
+          git commit -m "daily: update flight monitor artifacts"
           git push
