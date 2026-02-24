@@ -6,9 +6,6 @@ from typing import Iterable
 from dateutil import parser
 
 
-MIN_TIME = time(17, 0)
-
-
 @dataclass(frozen=True)
 class FlightLine:
     price: float
@@ -35,6 +32,13 @@ def _first_segment(leg: dict) -> dict | None:
     return (segs[0] or {}).get("segment") or None
 
 
+def _last_segment(leg: dict) -> dict | None:
+    segs = (leg or {}).get("sectorSegments") or []
+    if not segs:
+        return None
+    return (segs[-1] or {}).get("segment") or None
+
+
 def _leg_dep_local(leg: dict) -> datetime | None:
     seg = _first_segment(leg)
     if not seg:
@@ -43,11 +47,10 @@ def _leg_dep_local(leg: dict) -> datetime | None:
 
 
 def _leg_arr_local(leg: dict) -> datetime | None:
-    segs = (leg or {}).get("sectorSegments") or []
-    if not segs:
+    seg = _last_segment(leg)
+    if not seg:
         return None
-    last = (segs[-1] or {}).get("segment") or {}
-    return _isoparse(((last.get("destination") or {}).get("localTime")))
+    return _isoparse(((seg.get("destination") or {}).get("localTime")))
 
 
 def _leg_carrier_and_flight(leg: dict) -> tuple[str | None, str | None]:
@@ -59,48 +62,45 @@ def _leg_carrier_and_flight(leg: dict) -> tuple[str | None, str | None]:
     return ccode, flight_no
 
 
-def _ok_after_17(out_dep: datetime | None, in_dep: datetime | None) -> bool:
-    if out_dep is None or in_dep is None:
-        return False
-    return out_dep.time() >= MIN_TIME and in_dep.time() >= MIN_TIME
-
-
 def _pattern_from_weekdays(out_dep: datetime, in_dep: datetime) -> str | None:
-    # Python weekday: Mon=0 ... Sun=6
+    # Mon=0 ... Sun=6
     out_w = out_dep.weekday()
     in_w = in_dep.weekday()
 
-    if out_w == 4 and in_w == 6:  # Fri -> Sun
+    if out_w == 4 and in_w == 6:
         return "Fri → Sun"
-    if out_w == 3 and in_w == 6:  # Thu -> Sun
+    if out_w == 3 and in_w == 6:
         return "Thu → Sun"
-    if out_w == 4 and in_w == 0:  # Fri -> Mon
+    if out_w == 4 and in_w == 0:
         return "Fri → Mon"
-    if out_w == 3 and in_w == 0:  # Thu -> Mon
+    if out_w == 3 and in_w == 0:
         return "Thu → Mon"
     return None
 
 
 def _weekend_start_thu(out_dep: datetime) -> date:
-    # For Fri departures, weekend "start" is previous Thu
-    if out_dep.weekday() == 4:  # Fri
-        return (out_dep.date() - timedelta(days=1))
-    return out_dep.date()  # Thu stays Thu
+    return (out_dep.date() - timedelta(days=1)) if out_dep.weekday() == 4 else out_dep.date()
 
 
-def _within_next_weeks(d: date, weeks: int = 5) -> bool:
+def _within_next_weeks(d: date, weeks: int) -> bool:
     today = date.today()
     return today <= d <= (today + timedelta(days=7 * weeks))
 
 
 def collect_weekend_report(
-    origin_label: str,
     itineraries: Iterable[dict],
-    currency: str = "EUR",
+    currency: str,
+    weeks: int,
+    min_out_time: time,
+    min_in_time: time,
 ) -> dict[date, dict[str, list[FlightLine]]]:
     """
-    Returns:
-      weekend_start_date -> pattern_label -> top3 FlightLine sorted by price
+    weekend_start_date -> pattern_label -> top3 FlightLine sorted by price
+    Filters:
+      - pattern must be one of Thu/Fri -> Sun/Mon combos
+      - out_dep >= min_out_time
+      - in_dep  >= min_in_time
+      - weekend_start within next `weeks` weeks
     """
     buckets: dict[date, dict[str, list[FlightLine]]] = {}
 
@@ -121,23 +121,23 @@ def collect_weekend_report(
         if out_dep is None or in_dep is None:
             continue
 
-        # filter after 17:00 both legs
-        if not _ok_after_17(out_dep, in_dep):
-            continue
-
         pattern = _pattern_from_weekdays(out_dep, in_dep)
         if pattern is None:
             continue
 
+        if out_dep.time() < min_out_time:
+            continue
+        if in_dep.time() < min_in_time:
+            continue
+
         wstart = _weekend_start_thu(out_dep)
-        if not _within_next_weeks(wstart, weeks=5):
+        if not _within_next_weeks(wstart, weeks=weeks):
             continue
 
         out_arr = _leg_arr_local(out_leg)
         in_arr = _leg_arr_local(in_leg)
 
-        ccode, flight_no = _leg_carrier_and_flight(out_leg)  # first segment outbound
-        # times like "16:55—19:05" style
+        ccode, flight_no = _leg_carrier_and_flight(out_leg)
         out_time = f"{out_dep.strftime('%H:%M')}—{(out_arr or out_dep).strftime('%H:%M')}"
         in_time = f"{in_dep.strftime('%H:%M')}—{(in_arr or in_dep).strftime('%H:%M')}"
 
@@ -152,8 +152,7 @@ def collect_weekend_report(
 
         buckets.setdefault(wstart, {}).setdefault(pattern, []).append(line)
 
-    # keep top3 by price per (weekend, pattern)
-    for wstart, patterns in buckets.items():
+    for ws, patterns in buckets.items():
         for p, lines in patterns.items():
             lines.sort(key=lambda x: x.price)
             patterns[p] = lines[:3]
