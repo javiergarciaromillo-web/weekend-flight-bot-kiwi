@@ -1,9 +1,1 @@
 run_date,origin,pattern,destination,currency,best_price,best_itinerary_id,out_dep_local,in_dep_local,carriers,flight_numbers
-2026-02-24,AMS,fri_sun,BCN,EUR,,,,,,
-2026-02-24,AMS,thu_sun,BCN,EUR,,,,,,
-2026-02-24,AMS,fri_mon,BCN,EUR,,,,,,
-2026-02-24,AMS,thu_mon,BCN,EUR,,,,,,
-2026-02-24,RTM,fri_sun,BCN,EUR,,,,,,
-2026-02-24,RTM,thu_sun,BCN,EUR,,,,,,
-2026-02-24,RTM,fri_mon,BCN,EUR,,,,,,
-2026-02-24,RTM,thu_mon,BCN,EUR,,,,,,
