@@ -1,117 +1,72 @@
-import re
+from __future__ import annotations
+
 from datetime import datetime, time
 from dateutil import parser
 
 
-ISO_LIKE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
-
-
-def _walk(obj):
-    """Yield all (path, value) pairs in a nested dict/list structure."""
-    stack = [("", obj)]
-    while stack:
-        path, cur = stack.pop()
-        if isinstance(cur, dict):
-            for k, v in cur.items():
-                p = f"{path}.{k}" if path else str(k)
-                stack.append((p, v))
-        elif isinstance(cur, list):
-            for i, v in enumerate(cur):
-                p = f"{path}[{i}]"
-                stack.append((p, v))
-        else:
-            yield path, cur
-
-
-def _find_iso_datetimes(obj):
-    """Return list of datetimes parsed from ISO-like strings found in obj."""
-    out = []
-    for _path, v in _walk(obj):
-        if isinstance(v, str) and ISO_LIKE.search(v):
-            try:
-                out.append(parser.isoparse(v))
-            except Exception:
-                pass
-    return out
-
-
-def _find_flight_tokens(obj):
-    """
-    Collect candidate flight numbers and carrier codes from common key patterns.
-    Returns (carriers, flight_numbers) as comma-separated strings (may be '').
-    """
-    carriers = set()
-    flight_numbers = set()
-
-    for path, v in _walk(obj):
-        if not isinstance(v, (str, int)):
-            continue
-
-        key = path.split(".")[-1]
-
-        # carrier codes often appear under keys like 'carrier', 'airline', 'marketingCarrier'
-        if isinstance(v, str) and key.lower() in {"carrier", "airline", "carrierCode".lower(), "airlineCode".lower()}:
-            if 2 <= len(v) <= 4 and v.isalnum():
-                carriers.add(v)
-
-        # flight number often as int or string under keys like 'flightNumber'
-        if key.lower() in {"flightnumber", "flight_number", "flightno", "flight"}:
-            s = str(v).strip()
-            if 1 <= len(s) <= 6 and s.replace("-", "").isalnum():
-                flight_numbers.add(s)
-
-        # sometimes nested objects: carrier: {code: "VY"}
-        if key.lower() == "code" and isinstance(v, str):
-            # only accept short-ish codes to avoid grabbing random IDs
-            if 2 <= len(v) <= 3 and v.isalnum():
-                carriers.add(v)
-
-    return ", ".join(sorted(carriers)), ", ".join(sorted(flight_numbers))
-
-
-def extract_leg_departure_local(leg_obj) -> datetime | None:
-    """
-    Best-effort: find a local departure datetime in the leg object.
-    Strategy:
-      - parse all ISO-like datetimes found inside leg
-      - pick the earliest as 'departure' (usually first segment takeoff)
-    """
-    dts = _find_iso_datetimes(leg_obj)
-    if not dts:
+def _parse_local_time(s: str | None) -> datetime | None:
+    if not s:
         return None
-    return min(dts)
+    try:
+        return parser.isoparse(s)
+    except Exception:
+        return None
 
 
-def leg_ok_after(leg_obj, min_time: time) -> tuple[bool, datetime | None]:
-    dep = extract_leg_departure_local(leg_obj)
-    if dep is None:
-        return False, None
-    return dep.time() >= min_time, dep
+def _first_segment(leg: dict) -> dict | None:
+    segs = (leg or {}).get("sectorSegments") or []
+    if not segs:
+        return None
+    return (segs[0] or {}).get("segment")
 
 
-def extract_itinerary_summary(itinerary: dict) -> dict:
+def extract_leg_departure_local(leg: dict) -> datetime | None:
+    seg = _first_segment(leg)
+    if not seg:
+        return None
+    return _parse_local_time(((seg.get("source") or {}).get("localTime")))
+
+
+def extract_leg_flights(leg: dict) -> tuple[str | None, str | None]:
     """
-    Returns a summary dict with:
-      - out_dep (datetime|None)
-      - in_dep (datetime|None)
-      - carriers (string)
-      - flight_numbers (string)
+    Returns:
+      carriers: e.g. "HV(Transavia)" or "HV(Transavia), VY(Vueling)"
+      flights: e.g. "HV5131, HV5136"
     """
-    outbound = itinerary.get("outbound", {})
-    inbound = itinerary.get("inbound", {})
+    segs = (leg or {}).get("sectorSegments") or []
+    carriers = []
+    flights = []
+
+    for ss in segs:
+        seg = (ss or {}).get("segment") or {}
+        carrier = seg.get("carrier") or {}
+        ccode = carrier.get("code")
+        cname = carrier.get("name")
+        fcode = seg.get("code")  # flight number part like "5131"
+
+        if ccode and cname:
+            carriers.append(f"{ccode}({cname})")
+        elif ccode:
+            carriers.append(str(ccode))
+
+        if ccode and fcode:
+            flights.append(f"{ccode}{fcode}")
+        elif fcode:
+            flights.append(str(fcode))
+
+    carriers_str = ", ".join(carriers) if carriers else None
+    flights_str = ", ".join(flights) if flights else None
+    return carriers_str, flights_str
+
+
+def itinerary_ok_after(itinerary: dict, min_time: time) -> tuple[bool, datetime | None, datetime | None]:
+    outbound = itinerary.get("outbound") or {}
+    inbound = itinerary.get("inbound") or {}
 
     out_dep = extract_leg_departure_local(outbound)
     in_dep = extract_leg_departure_local(inbound)
 
-    carriers_out, flights_out = _find_flight_tokens(outbound)
-    carriers_in, flights_in = _find_flight_tokens(inbound)
+    if out_dep is None or in_dep is None:
+        return False, out_dep, in_dep
 
-    carriers = ", ".join([x for x in [carriers_out, carriers_in] if x]).strip(", ")
-    flight_numbers = ", ".join([x for x in [flights_out, flights_in] if x]).strip(", ")
-
-    return {
-        "out_dep": out_dep,
-        "in_dep": in_dep,
-        "carriers": carriers,
-        "flight_numbers": flight_numbers,
-    }
+    return (out_dep.time() >= min_time) and (in_dep.time() >= min_time), out_dep, in_dep
