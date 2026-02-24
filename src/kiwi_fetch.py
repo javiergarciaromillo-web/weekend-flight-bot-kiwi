@@ -1,41 +1,44 @@
 import os
 import requests
-from datetime import date
+from datetime import date, datetime, timedelta
 
 API_URL = "https://kiwi-com-cheap-flights.p.rapidapi.com/round-trip"
 API_HOST = "kiwi-com-cheap-flights.p.rapidapi.com"
 
 
-def fetch_round_trip_by_dates(
+def _dt_start(d: date) -> str:
+    # API expects: 2023-07-22T00:00:00
+    return datetime(d.year, d.month, d.day, 0, 0, 0).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _dt_end(d: date) -> str:
+    # inclusive end of day
+    return datetime(d.year, d.month, d.day, 23, 59, 59).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def fetch_round_trip_window(
     source: str,
     destination: str,
-    departure_date: date,
-    return_date: date,
+    *,
+    start_date: date,
+    end_date: date,
     currency: str = "EUR",
+    locale: str = "en",
+    adults: int = 1,
+    max_stops: int = 0,
     limit: int = 200,
 ) -> dict:
-    # Candidate parameter names (wrapper-dependent)
-    date_params = {
-        # common “explicit dates”
-        "departureDate": departure_date.isoformat(),
-        "returnDate": return_date.isoformat(),
-        "departure_date": departure_date.isoformat(),
-        "return_date": return_date.isoformat(),
-        "outboundDate": departure_date.isoformat(),
-        "inboundDate": return_date.isoformat(),
-        "outbound_date": departure_date.isoformat(),
-        "inbound_date": return_date.isoformat(),
-        # sometimes these exist in “from/to” form but can accept exact date
-        "dateFrom": departure_date.isoformat(),
-        "dateTo": departure_date.isoformat(),
-    }
+    """
+    Search within a departure/return date window (next 5 weeks).
+    IMPORTANT: parameter name is 'outboundDepartmentDateStart/End' (typo in API).
+    """
 
     querystring = {
         "source": source,
         "destination": destination,
         "currency": currency,
-        "locale": "en",
-        "adults": "1",
+        "locale": locale,
+        "adults": str(adults),
         "children": "0",
         "infants": "0",
         "handbags": "1",
@@ -43,17 +46,25 @@ def fetch_round_trip_by_dates(
         "cabinClass": "ECONOMY",
         "sortBy": "PRICE",
         "sortOrder": "ASCENDING",
+        "maxStopsCount": str(max_stops),
         "transportTypes": "FLIGHT",
         "limit": str(limit),
-        # IMPORTANT: do NOT use nights here; we want explicit dates
-        **date_params,
+
+        # Only allow outbound departures Thu/Fri
+        "outbound": "THURSDAY,FRIDAY",
+
+        # Date windows (THIS is what makes it work)
+        "outboundDepartmentDateStart": _dt_start(start_date),
+        "outboundDepartmentDateEnd": _dt_end(end_date),
+        "inboundDepartureDateStart": _dt_start(start_date),
+        "inboundDepartureDateEnd": _dt_end(end_date),
     }
 
     headers = {
-        "X-RapidAPI-Key": os.environ["RAPIDAPI_KEY"],
-        "X-RapidAPI-Host": API_HOST,
+        "x-rapidapi-key": os.environ["RAPIDAPI_KEY"],
+        "x-rapidapi-host": API_HOST,
     }
 
-    r = requests.get(API_URL, headers=headers, params=querystring, timeout=30)
+    r = requests.get(API_URL, headers=headers, params=querystring, timeout=60)
     r.raise_for_status()
     return r.json()
