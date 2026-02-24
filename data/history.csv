@@ -1,1 +1,1 @@
-run_date,origin,pattern,destination,currency,best_price,best_itinerary_id
+run_date,origin,pattern,destination,currency,best_price,best_itinerary_id,out_dep_local,in_dep_local,carriers,flight_numbers
