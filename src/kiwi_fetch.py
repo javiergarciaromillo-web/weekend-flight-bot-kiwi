@@ -1,6 +1,7 @@
 import os
 import requests
 
+
 def test_call():
     url = "https://kiwi-com-cheap-flights.p.rapidapi.com/round-trip"
 
@@ -23,10 +24,15 @@ def test_call():
 
     headers = {
         "x-rapidapi-key": os.environ["RAPIDAPI_KEY"],
-        "x-rapidapi-host": os.environ["RAPIDAPI_HOST"]
+        "x-rapidapi-host": "kiwi-com-cheap-flights.p.rapidapi.com"
     }
 
-    response = requests.get(url, headers=headers, params=querystring, timeout=30)
-    response.raise_for_status()
+    response = requests.get(
+        url,
+        headers=headers,
+        params=querystring,
+        timeout=30
+    )
 
+    response.raise_for_status()
     return response.json()
