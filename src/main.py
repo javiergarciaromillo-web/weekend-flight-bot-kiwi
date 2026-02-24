@@ -1,9 +1,10 @@
-from datetime import date, datetime, time, timedelta
-from collections import Counter
+from datetime import time, date, timedelta
+from collections import defaultdict
 
-from dateutil import parser
-
-from src.kiwi_fetch import fetch_round_trip
+from src.kiwi_fetch import fetch_round_trip_by_dates
+from src.planner import Pattern, generate_date_pairs
+from src.email_report import build_html_report, send_email
+from src.report_builder import collect_weekend_report
 
 
 ORIGINS = {
@@ -13,153 +14,78 @@ ORIGINS = {
 
 DESTINATION = "City:barcelona_es"
 CURRENCY = "EUR"
-NIGHTS_QUERIES = [2, 3, 4]
+HORIZON_WEEKS = 5
+LIMIT_PER_QUERY = 250
 
-MIN_TIME = time(17, 0)
-WEEKS = 5
+MIN_OUT_TIME = time(17, 0)
+MIN_IN_TIME = time(17, 0)
 
-
-def _isoparse(s: str | None) -> datetime | None:
-    if not s:
-        return None
-    try:
-        return parser.isoparse(s)
-    except Exception:
-        return None
-
-
-def _first_segment(leg: dict) -> dict | None:
-    segs = (leg or {}).get("sectorSegments") or []
-    if not segs:
-        return None
-    return (segs[0] or {}).get("segment") or None
+PATTERNS = [
+    Pattern(name="thu_sun", depart_dow=3, return_dow=6),  # Thu->Sun
+    Pattern(name="thu_mon", depart_dow=3, return_dow=0),  # Thu->Mon
+    Pattern(name="fri_sun", depart_dow=4, return_dow=6),  # Fri->Sun
+    Pattern(name="fri_mon", depart_dow=4, return_dow=0),  # Fri->Mon
+]
 
 
-def _dep_local(leg: dict) -> datetime | None:
-    seg = _first_segment(leg)
-    if not seg:
-        return None
-    return _isoparse(((seg.get("source") or {}).get("localTime")))
-
-
-def _pattern(out_dep: datetime, in_dep: datetime) -> str | None:
-    # Mon=0 ... Sun=6
-    o = out_dep.weekday()
-    i = in_dep.weekday()
-    if o == 4 and i == 6:
-        return "Fri→Sun"
-    if o == 3 and i == 6:
-        return "Thu→Sun"
-    if o == 4 and i == 0:
-        return "Fri→Mon"
-    if o == 3 and i == 0:
-        return "Thu→Mon"
-    return None
-
-
-def _weekend_start_thu(out_dep: datetime) -> date:
-    # If Fri, weekend start is previous Thu
-    return (out_dep.date() - timedelta(days=1)) if out_dep.weekday() == 4 else out_dep.date()
-
-
-def _within_next_weeks(d: date) -> bool:
-    today = date.today()
-    return today <= d <= (today + timedelta(days=7 * WEEKS))
+def _pattern_title(pname: str) -> str:
+    return {
+        "thu_sun": "Thu → Sun",
+        "thu_mon": "Thu → Mon",
+        "fri_sun": "Fri → Sun",
+        "fri_mon": "Fri → Mon",
+    }.get(pname, pname)
 
 
 def main():
-    print("==== DEBUG RUN ====")
-    print("Filter target:")
-    print("- Outbound weekday in {Thu,Fri}")
-    print("- Inbound weekday in {Sun,Mon}")
-    print(f"- Outbound time >= {MIN_TIME.strftime('%H:%M')}")
-    print(f"- Inbound time >= {MIN_TIME.strftime('%H:%M')}")
-    print(f"- Weekend start within next {WEEKS} weeks\n")
+    pairs = generate_date_pairs(HORIZON_WEEKS, PATTERNS)
 
-    for origin_label, origin in ORIGINS.items():
-        all_itins = []
-        meta_out_days = Counter()
-        meta_in_days = Counter()
+    # weekend_start_thursday -> origin_label -> list[itineraries]
+    weekend_origin_itins = defaultdict(lambda: defaultdict(list))
 
-        # 3 requests per origin
-        for nights in NIGHTS_QUERIES:
-            data = fetch_round_trip(
+    for pname, dep, ret in pairs:
+        # anchor week at Thursday (same as your Amadeus bot)
+        anchor = dep if dep.weekday() == 3 else (dep - timedelta(days=1))
+
+        for origin_label, origin in ORIGINS.items():
+            data = fetch_round_trip_by_dates(
                 source=origin,
                 destination=DESTINATION,
-                nights=nights,
+                departure_date=dep,
+                return_date=ret,
                 currency=CURRENCY,
-                limit=200,
+                limit=LIMIT_PER_QUERY,
             )
-
-            md = data.get("metadata") or {}
-            for d in (md.get("outboundDays") or []):
-                meta_out_days[d] += 1
-            for d in (md.get("inboundDays") or []):
-                meta_in_days[d] += 1
-
             itins = data.get("itineraries", []) or []
-            all_itins.extend(itins)
+            weekend_origin_itins[anchor][origin_label].extend(itins)
 
-        print(f"--- ORIGIN {origin_label} ---")
-        print("Fetched itineraries total:", len(all_itins))
-        if meta_out_days:
-            print("metadata.outboundDays:", dict(meta_out_days))
-        if meta_in_days:
-            print("metadata.inboundDays:", dict(meta_in_days))
+    # Convert to the structure expected by build_html_report:
+    # origin_label -> weekend_start -> pattern -> lines
+    all_origins_buckets = {k: {} for k in ORIGINS.keys()}
 
-        # Parse deps
-        parsed = []
-        out_wd = Counter()
-        in_wd = Counter()
-        min_out = None
-        max_out = None
+    for weekend_start, origin_map in weekend_origin_itins.items():
+        for origin_label, itins in origin_map.items():
+            # We reuse your existing report builder, but here we already know the horizon,
+            # and we want time filtering and pattern grouping.
+            buckets = collect_weekend_report(
+                itineraries=itins,
+                currency=CURRENCY,
+                weeks=HORIZON_WEEKS,
+                min_out_time=MIN_OUT_TIME,
+                min_in_time=MIN_IN_TIME,
+            )
+            # buckets is weekend_start->pattern->lines; merge
+            for ws, patterns in buckets.items():
+                all_origins_buckets[origin_label].setdefault(ws, {})
+                for pat, lines in patterns.items():
+                    all_origins_buckets[origin_label][ws].setdefault(pat, [])
+                    all_origins_buckets[origin_label][ws][pat].extend(lines)
+                    all_origins_buckets[origin_label][ws][pat].sort(key=lambda x: x.price)
+                    all_origins_buckets[origin_label][ws][pat] = all_origins_buckets[origin_label][ws][pat][:3]
 
-        for it in all_itins:
-            out_dep = _dep_local(it.get("outbound") or {})
-            in_dep = _dep_local(it.get("inbound") or {})
-            if out_dep is None or in_dep is None:
-                continue
-
-            parsed.append((it, out_dep, in_dep))
-
-            out_wd[out_dep.strftime("%A")] += 1
-            in_wd[in_dep.strftime("%A")] += 1
-
-            min_out = out_dep if (min_out is None or out_dep < min_out) else min_out
-            max_out = out_dep if (max_out is None or out_dep > max_out) else max_out
-
-        print("Parsed with times:", len(parsed))
-        if min_out and max_out:
-            print("Outbound date range:", min_out.isoformat(), "->", max_out.isoformat())
-        print("Outbound weekday distribution:", dict(out_wd))
-        print("Inbound weekday distribution:", dict(in_wd))
-
-        # Stepwise filters
-        step0 = parsed
-        step1 = [(it, o, i) for (it, o, i) in step0 if o.weekday() in (3, 4)]  # Thu/Fri
-        step2 = [(it, o, i) for (it, o, i) in step1 if i.weekday() in (6, 0)]  # Sun/Mon
-        step3 = [(it, o, i) for (it, o, i) in step2 if o.time() >= MIN_TIME and i.time() >= MIN_TIME]
-        step4 = [(it, o, i) for (it, o, i) in step3 if _pattern(o, i) is not None]
-        step5 = [(it, o, i) for (it, o, i) in step4 if _within_next_weeks(_weekend_start_thu(o))]
-
-        print("\nFilter survival counts:")
-        print("step0 parsed:", len(step0))
-        print("step1 outbound Thu/Fri:", len(step1))
-        print("step2 inbound Sun/Mon:", len(step2))
-        print("step3 time >=17 both:", len(step3))
-        print("step4 matches 4 patterns:", len(step4))
-        print(f"step5 within next {WEEKS} weeks:", len(step5))
-
-        # Show 3 examples if any remain at each step5
-        if step5:
-            step5_sorted = sorted(step5, key=lambda x: float(((x[0].get('price') or {}).get('amount') or "1e18")))
-            print("\nExamples (up to 3) that PASS all filters:")
-            for it, o, i in step5_sorted[:3]:
-                price = float(((it.get("price") or {}).get("amount") or "nan"))
-                print(f"- {price:.2f} {CURRENCY} | OUT {o} | IN {i}")
-        print("\n")
-
-    print("==== END DEBUG ====")
+    html = build_html_report(all_origins_buckets)
+    send_email(subject="Weekend flight monitor (next 5 weeks)", html_body=html)
+    print("Email sent.")
 
 
 if __name__ == "__main__":
