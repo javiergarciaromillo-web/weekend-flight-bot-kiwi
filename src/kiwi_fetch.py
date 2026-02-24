@@ -1,33 +1,33 @@
 import os
 import requests
-from datetime import date, timedelta
+from datetime import date
 
 API_URL = "https://kiwi-com-cheap-flights.p.rapidapi.com/round-trip"
 API_HOST = "kiwi-com-cheap-flights.p.rapidapi.com"
 
 
-def fetch_round_trip(
+def fetch_round_trip_by_dates(
     source: str,
     destination: str,
-    nights: int,
+    departure_date: date,
+    return_date: date,
     currency: str = "EUR",
     limit: int = 200,
-    weeks: int = 5,
 ) -> dict:
-    today = date.today()
-    end = today + timedelta(days=7 * weeks)
-
-    # Different wrappers use different parameter names for date ranges.
-    # We set multiple; the API will use the ones it recognizes.
+    # Candidate parameter names (wrapper-dependent)
     date_params = {
-        "dateFrom": today.isoformat(),
-        "dateTo": end.isoformat(),
-        "date_from": today.isoformat(),
-        "date_to": end.isoformat(),
-        "departureDateFrom": today.isoformat(),
-        "departureDateTo": end.isoformat(),
-        "outboundDateFrom": today.isoformat(),
-        "outboundDateTo": end.isoformat(),
+        # common “explicit dates”
+        "departureDate": departure_date.isoformat(),
+        "returnDate": return_date.isoformat(),
+        "departure_date": departure_date.isoformat(),
+        "return_date": return_date.isoformat(),
+        "outboundDate": departure_date.isoformat(),
+        "inboundDate": return_date.isoformat(),
+        "outbound_date": departure_date.isoformat(),
+        "inbound_date": return_date.isoformat(),
+        # sometimes these exist in “from/to” form but can accept exact date
+        "dateFrom": departure_date.isoformat(),
+        "dateTo": departure_date.isoformat(),
     }
 
     querystring = {
@@ -45,10 +45,7 @@ def fetch_round_trip(
         "sortOrder": "ASCENDING",
         "transportTypes": "FLIGHT",
         "limit": str(limit),
-        "nightsInDestinationFrom": str(nights),
-        "nightsInDestinationTo": str(nights),
-        "outbound": "THURSDAY,FRIDAY",
-        # inbound is unreliable in this wrapper; we filter inbound weekday in code
+        # IMPORTANT: do NOT use nights here; we want explicit dates
         **date_params,
     }
 
