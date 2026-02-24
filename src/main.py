@@ -1,8 +1,6 @@
-from datetime import time
-
 from src.kiwi_fetch import fetch_round_trip
-from src.history import append_row
-from src.itinerary_extract import extract_leg_flights, itinerary_ok_after
+from src.report_builder import collect_weekend_report
+from src.email_report import build_html_report, send_email
 
 
 ORIGINS = {
@@ -10,110 +8,35 @@ ORIGINS = {
     "RTM": "City:rotterdam_nl",
 }
 
-PATTERNS = {
-    "fri_sun": 2,
-    "thu_sun": 3,
-    "fri_mon": 3,
-    "thu_mon": 4,
-}
+DESTINATION = "City:barcelona_es"
+CURRENCY = "EUR"
 
-MIN_DEPARTURE_TIME = time(17, 0)  # >= 17:00 local
-
-
-def pick_best_filtered(itineraries: list[dict]):
-    best_price = None
-    best_it = None
-    best_out_dep = None
-    best_in_dep = None
-
-    for it in itineraries:
-        amount_str = (it.get("price", {}) or {}).get("amount")
-        if not amount_str:
-            continue
-        try:
-            amount = float(amount_str)
-        except ValueError:
-            continue
-
-        ok, out_dep, in_dep = itinerary_ok_after(it, MIN_DEPARTURE_TIME)
-        if not ok:
-            continue
-
-        if best_price is None or amount < best_price:
-            best_price = amount
-            best_it = it
-            best_out_dep = out_dep
-            best_in_dep = in_dep
-
-    return best_price, best_it, best_out_dep, best_in_dep
+# nights=3 cubre Thu->Sun y Fri->Mon (se separa por weekday en el código)
+NIGHTS_QUERIES = [2, 3, 4]
 
 
 def main():
-    currency = "EUR"
-    destination = "City:barcelona_es"
+    all_origins_buckets = {}
 
-    for origin_code, origin in ORIGINS.items():
-        for pattern_name, nights in PATTERNS.items():
-            print(f"\nOrigin: {origin_code} | pattern: {pattern_name} ({nights} nights)")
-
+    for origin_label, origin in ORIGINS.items():
+        all_itins = []
+        for nights in NIGHTS_QUERIES:
             data = fetch_round_trip(
                 source=origin,
-                destination=destination,
+                destination=DESTINATION,
                 nights=nights,
-                currency=currency,
-                limit=20,
+                currency=CURRENCY,
+                limit=200,
             )
+            itins = data.get("itineraries", [])
+            all_itins.extend(itins)
 
-            itineraries = data.get("itineraries", [])
-            print("Found itineraries:", len(itineraries))
+        buckets = collect_weekend_report(origin_label=origin_label, itineraries=all_itins, currency=CURRENCY)
+        all_origins_buckets[origin_label] = buckets
 
-            best_price, best_it, out_dep, in_dep = pick_best_filtered(itineraries)
-
-            if not best_it:
-                print("Best (>=17:00 local): NONE")
-                append_row(
-                    origin=origin_code,
-                    pattern=pattern_name,
-                    destination="BCN",
-                    currency=currency,
-                    best_price=None,
-                    best_itinerary_id=None,
-                    out_dep=None,
-                    in_dep=None,
-                    carriers=None,
-                    flight_numbers=None,
-                )
-                continue
-
-            outbound = best_it.get("outbound") or {}
-            inbound = best_it.get("inbound") or {}
-            carriers_out, flights_out = extract_leg_flights(outbound)
-            carriers_in, flights_in = extract_leg_flights(inbound)
-
-            carriers = ", ".join([x for x in [carriers_out, carriers_in] if x]) or None
-            flight_numbers = ", ".join([x for x in [flights_out, flights_in] if x]) or None
-
-            out_dep_s = out_dep.isoformat() if out_dep else None
-            in_dep_s = in_dep.isoformat() if in_dep else None
-
-            print("Best (>=17:00 local):", best_price, currency)
-            print("  out_dep:", out_dep_s)
-            print("  in_dep:", in_dep_s)
-            print("  carriers:", carriers)
-            print("  flight_numbers:", flight_numbers)
-
-            append_row(
-                origin=origin_code,
-                pattern=pattern_name,
-                destination="BCN",
-                currency=currency,
-                best_price=best_price,
-                best_itinerary_id=best_it.get("id"),
-                out_dep=out_dep_s,
-                in_dep=in_dep_s,
-                carriers=carriers,
-                flight_numbers=flight_numbers,
-            )
+    html = build_html_report(all_origins_buckets)
+    send_email(subject="Weekend flight monitor (next 5 weeks)", html_body=html)
+    print("Email sent.")
 
 
 if __name__ == "__main__":
