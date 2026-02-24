@@ -1,10 +1,12 @@
-from datetime import time, date, timedelta
+from __future__ import annotations
+
 from collections import defaultdict
+from datetime import time, timedelta
 
 from src.kiwi_fetch import fetch_round_trip_by_dates
 from src.planner import Pattern, generate_date_pairs
-from src.email_report import build_html_report, send_email
 from src.report_builder import collect_weekend_report
+from src.email_report import build_html_report, send_email
 
 
 ORIGINS = {
@@ -21,31 +23,42 @@ MIN_OUT_TIME = time(17, 0)
 MIN_IN_TIME = time(17, 0)
 
 PATTERNS = [
-    Pattern(name="thu_sun", depart_dow=3, return_dow=6),  # Thu->Sun
-    Pattern(name="thu_mon", depart_dow=3, return_dow=0),  # Thu->Mon
-    Pattern(name="fri_sun", depart_dow=4, return_dow=6),  # Fri->Sun
-    Pattern(name="fri_mon", depart_dow=4, return_dow=0),  # Fri->Mon
+    Pattern(name="thu_sun", depart_dow=3, return_dow=6),
+    Pattern(name="thu_mon", depart_dow=3, return_dow=0),
+    Pattern(name="fri_sun", depart_dow=4, return_dow=6),
+    Pattern(name="fri_mon", depart_dow=4, return_dow=0),
 ]
 
 
-def _pattern_title(pname: str) -> str:
-    return {
-        "thu_sun": "Thu → Sun",
-        "thu_mon": "Thu → Mon",
-        "fri_sun": "Fri → Sun",
-        "fri_mon": "Fri → Mon",
-    }.get(pname, pname)
+def _weekend_anchor_thursday(dep):
+    # dep is date
+    if dep.weekday() == 3:  # Thu
+        return dep
+    if dep.weekday() == 4:  # Fri
+        return dep - timedelta(days=1)
+    # fallback
+    delta = (dep.weekday() - 3) % 7
+    return dep - timedelta(days=delta)
+
+
+def _first_seg_time(itinerary: dict, leg_key: str) -> str | None:
+    leg = itinerary.get(leg_key) or {}
+    segs = leg.get("sectorSegments") or []
+    if not segs:
+        return None
+    seg = (segs[0] or {}).get("segment") or {}
+    return ((seg.get("source") or {}).get("localTime"))
 
 
 def main():
     pairs = generate_date_pairs(HORIZON_WEEKS, PATTERNS)
 
-    # weekend_start_thursday -> origin_label -> list[itineraries]
     weekend_origin_itins = defaultdict(lambda: defaultdict(list))
 
+    printed_debug = False
+
     for pname, dep, ret in pairs:
-        # anchor week at Thursday (same as your Amadeus bot)
-        anchor = dep if dep.weekday() == 3 else (dep - timedelta(days=1))
+        anchor = _weekend_anchor_thursday(dep)
 
         for origin_label, origin in ORIGINS.items():
             data = fetch_round_trip_by_dates(
@@ -59,14 +72,20 @@ def main():
             itins = data.get("itineraries", []) or []
             weekend_origin_itins[anchor][origin_label].extend(itins)
 
-    # Convert to the structure expected by build_html_report:
-    # origin_label -> weekend_start -> pattern -> lines
+            # Print debug ONCE (first non-empty response)
+            if (not printed_debug) and itins:
+                first = itins[0]
+                out_time = _first_seg_time(first, "outbound")
+                in_time = _first_seg_time(first, "inbound")
+                print("REQUESTED:", dep.isoformat(), "→", ret.isoformat(), "| origin", origin_label)
+                print("RETURNED :", out_time, "→", in_time)
+                print("-" * 60)
+                printed_debug = True
+
     all_origins_buckets = {k: {} for k in ORIGINS.keys()}
 
     for weekend_start, origin_map in weekend_origin_itins.items():
         for origin_label, itins in origin_map.items():
-            # We reuse your existing report builder, but here we already know the horizon,
-            # and we want time filtering and pattern grouping.
             buckets = collect_weekend_report(
                 itineraries=itins,
                 currency=CURRENCY,
@@ -74,7 +93,7 @@ def main():
                 min_out_time=MIN_OUT_TIME,
                 min_in_time=MIN_IN_TIME,
             )
-            # buckets is weekend_start->pattern->lines; merge
+
             for ws, patterns in buckets.items():
                 all_origins_buckets[origin_label].setdefault(ws, {})
                 for pat, lines in patterns.items():
