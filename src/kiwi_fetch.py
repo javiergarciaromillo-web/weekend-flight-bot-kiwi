@@ -5,7 +5,7 @@ API_URL = "https://kiwi-com-cheap-flights.p.rapidapi.com/round-trip"
 API_HOST = "kiwi-com-cheap-flights.p.rapidapi.com"
 
 
-def fetch_round_trip(source: str, destination: str, nights: int, currency: str = "EUR", limit: int = 20) -> dict:
+def fetch_round_trip(source: str, destination: str, nights: int, currency: str = "EUR", limit: int = 200) -> dict:
     querystring = {
         "source": source,
         "destination": destination,
@@ -17,12 +17,14 @@ def fetch_round_trip(source: str, destination: str, nights: int, currency: str =
         "handbags": "1",
         "holdbags": "0",
         "cabinClass": "ECONOMY",
-        "sortBy": "QUALITY",
+        "sortBy": "PRICE",
         "sortOrder": "ASCENDING",
         "transportTypes": "FLIGHT",
         "limit": str(limit),
         "nightsInDestinationFrom": str(nights),
         "nightsInDestinationTo": str(nights),
+        "outbound": "THURSDAY,FRIDAY",
+        "inbound": "SUNDAY,MONDAY",
     }
 
     headers = {
