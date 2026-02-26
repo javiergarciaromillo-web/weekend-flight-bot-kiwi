@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import requests
 
@@ -29,8 +29,8 @@ class FlightsClient:
         self,
         origin: str,
         destination: str,
-        departure_date: str,  # YYYY-MM-DD
-        return_date: str,     # YYYY-MM-DD
+        departure_date: str,
+        return_date: str,
         stops: int = 0,
         adults: int = 1,
         children: int = 0,
@@ -47,9 +47,17 @@ class FlightsClient:
             "children": str(children),
             "infants": str(infants),
         }
+
         r = self.session.get(url, params=params, timeout=60)
+
+        # Debug on non-200
+        if r.status_code != 200:
+            print(f"[API-ERROR] status={r.status_code} url={url} params={params}")
+            print(f"[API-ERROR] body={r.text[:1000]}")  # first 1000 chars
+
         try:
             payload = r.json()
         except Exception:
-            payload = {"status": False, "status_code": r.status_code, "raw": r.text}
+            payload = {"raw": r.text}
+
         return ApiResult(status_code=r.status_code, payload=payload)
