@@ -31,20 +31,13 @@ def _within(t_hhmm: str, time_from: str, time_to: str) -> bool:
     return time_from <= t_hhmm <= time_to
 
 
-def _time_ok(
-    depart_iso: str,
-    arrive_iso: str,
-    time_from: str,
-    time_to: str,
-    mode: str,  # DEPART | ARRIVE | EITHER
-) -> bool:
+def _time_ok(depart_iso: str, arrive_iso: str, time_from: str, time_to: str, mode: str) -> bool:
     dep = _hhmm(depart_iso)
     arr = _hhmm(arrive_iso)
     if mode == "DEPART":
         return _within(dep, time_from, time_to)
     if mode == "ARRIVE":
         return _within(arr, time_from, time_to)
-    # EITHER
     return _within(dep, time_from, time_to) or _within(arr, time_from, time_to)
 
 
@@ -72,8 +65,13 @@ def extract_offers_with_stats(
         try:
             outbound = it["outbound"]
             inbound = it["inbound"]
-            out_seg = outbound["sectorSegments"][0]["segment"]
-            in_seg = inbound["sectorSegments"][0]["segment"]
+
+            out_segments = outbound["sectorSegments"]
+            in_segments = inbound["sectorSegments"]
+
+            # QUICK PATCH: take the last segment (more robust if API returns multiple)
+            out_seg = out_segments[-1]["segment"]
+            in_seg = in_segments[-1]["segment"]
 
             out_depart_iso = out_seg["source"]["localTime"]
             out_arrive_iso = out_seg["destination"]["localTime"]
