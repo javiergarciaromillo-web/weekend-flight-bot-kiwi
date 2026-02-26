@@ -92,6 +92,36 @@ def main() -> None:
                     adults=1,
                 )
 
+                # DEBUG: inspect raw carriers for specific case
+                if (
+                    origin == "AMS"
+                    and cfg.destination == "BCN"
+                    and outbound_s == "2026-03-05"
+                    and inbound_s == "2026-03-09"
+                ):
+                    data = (api.payload or {}).get("data") or {}
+                    itins = data.get("itineraries") or []
+                    carriers = set()
+                    op_carriers = set()
+
+                    for it in itins:
+                        try:
+                            out_seg = it["outbound"]["sectorSegments"][-1]["segment"]
+                            in_seg = it["inbound"]["sectorSegments"][-1]["segment"]
+
+                            c1 = ((out_seg.get("carrier") or {}).get("code")) or "?"
+                            c2 = ((in_seg.get("carrier") or {}).get("code")) or "?"
+                            oc1 = ((out_seg.get("operatingCarrier") or {}).get("code")) or "?"
+                            oc2 = ((in_seg.get("operatingCarrier") or {}).get("code")) or "?"
+
+                            carriers.update([c1, c2])
+                            op_carriers.update([oc1, oc2])
+                        except Exception:
+                            pass
+
+                    print(f"[DEBUG] carriers(carrier.code)={sorted(carriers)}")
+                    print(f"[DEBUG] carriers(operatingCarrier.code)={sorted(op_carriers)}")
+
                 offers, stats = extract_offers_with_stats(
                     api.payload,
                     cfg.out_time_from,
@@ -102,9 +132,14 @@ def main() -> None:
                     cfg.in_time_mode,
                 )
 
-                # DEBUG: dump first 10 filtered offers for one specific query
-                if origin == "AMS" and cfg.destination == "BCN" and outbound_s == "2026-03-05" and inbound_s == "2026-03-09":
-                    print("[DEBUG] Filtered offers (first 10) for AMS->BCN 2026-03-05/2026-03-09:")
+                # DEBUG: show filtered offers
+                if (
+                    origin == "AMS"
+                    and cfg.destination == "BCN"
+                    and outbound_s == "2026-03-05"
+                    and inbound_s == "2026-03-09"
+                ):
+                    print("[DEBUG] Filtered offers (first 10):")
                     for i, o in enumerate(offers[:10], start=1):
                         print(
                             f"  {i}) €{o.price_eur:.2f} "
@@ -137,77 +172,6 @@ def main() -> None:
             )
             upsert_snapshot(snapshot)
 
-            prev_best = get_previous_best_price(
-                origin=origin,
-                destination=cfg.destination,
-                pattern=q.pattern,
-                outbound_date=outbound_s,
-                inbound_date=inbound_s,
-                run_date=run_date,
-            )
-            delta = None
-            if best_price is not None and prev_best is not None:
-                delta = float(best_price) - float(prev_best)
-
-            weekends_map[week_start_s][route_key][q.pattern] = {
-                "pattern_label": _pattern_label(q.pattern),
-                "outbound_date": outbound_s,
-                "inbound_date": inbound_s,
-                "best": offers[0] if offers else None,
-                "top": offers,
-                "delta": delta,
-                "week_end": week_end_s,
-            }
-
-    weekends: List[Dict[str, Any]] = []
-    for week_start_s in sorted(weekends_map.keys()):
-        routes_out: List[Dict[str, Any]] = []
-        best_overall: Optional[float] = None
-
-        for route_key in sorted(weekends_map[week_start_s].keys()):
-            patterns_dict = weekends_map[week_start_s][route_key]
-            ordered = ["THU_SUN", "THU_MON", "FRI_SUN", "FRI_MON"]
-            patterns_list: List[Dict[str, Any]] = []
-            for p in ordered:
-                if p in patterns_dict:
-                    patterns_list.append(patterns_dict[p])
-                    b = patterns_dict[p].get("best")
-                    if b and (best_overall is None or b.price_eur < best_overall):
-                        best_overall = b.price_eur
-
-            routes_out.append({"route_label": route_key.replace("-", " ↔ "), "patterns": patterns_list})
-
-        any_route = next(iter(weekends_map[week_start_s].values()))
-        any_pat = next(iter(any_route.values()))
-        week_end_s = any_pat["week_end"]
-
-        weekends.append(
-            {
-                "week_start": week_start_s,
-                "week_end": week_end_s,
-                "best_label": f"€{best_overall:.2f}" if best_overall is not None else "—",
-                "routes": routes_out,
-            }
-        )
-
-    html = _render_email(
-        "templates/email.html",
-        {
-            "subject": cfg.subject_base,
-            "header": f"{','.join(cfg.origins)} ↔ {cfg.destination}",
-            "out_time_from": cfg.out_time_from,
-            "out_time_to": cfg.out_time_to,
-            "in_time_from": cfg.in_time_from,
-            "in_time_to": cfg.in_time_to,
-            "out_time_mode": cfg.out_time_mode,
-            "in_time_mode": cfg.in_time_mode,
-            "weeks": cfg.weeks,
-            "run_date": run_date,
-            "last_updated": last_refresh or run_date,
-            "weekends": weekends,
-        },
-    )
-
     subject = f"{cfg.subject_base} | {run_date}"
     send_email(
         smtp_host=cfg.smtp_host,
@@ -216,7 +180,7 @@ def main() -> None:
         smtp_pass=cfg.smtp_pass,
         to_addr=cfg.email_to,
         subject=subject,
-        html_body=html,
+        html_body="<p>Debug run completed</p>",
     )
 
 
