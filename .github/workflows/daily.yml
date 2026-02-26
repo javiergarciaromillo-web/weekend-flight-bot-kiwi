@@ -2,7 +2,6 @@ name: Daily flight email
 
 on:
   schedule:
-    # 06:15 Europe/Madrid
     - cron: "15 5 * * *"
   workflow_dispatch:
 
@@ -26,38 +25,32 @@ jobs:
 
       - name: Run
         env:
-          # === RapidAPI ===
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
           RAPIDAPI_HOST: "flights-scraper-real-time.p.rapidapi.com"
           BASE_URL: "https://flights-scraper-real-time.p.rapidapi.com"
 
-          # === Email ===
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
 
-          # === Route config ===
           ORIGINS: "AMS,RTM"
           DESTINATION: "BCN"
           WEEKS: "3"
-          TOP_N: "5"
+          TOP_N: "10"
           STOPS: "0"
 
-          # === Time windows ===
-          # Outbound (ida) → filtrar por hora de SALIDA
+          # Outbound strict: must DEPART 16-23
           OUT_TIME_FROM: "16:00"
           OUT_TIME_TO: "23:00"
           OUT_TIME_MODE: "DEPART"
 
-          # Inbound (vuelta) → filtrar por hora de LLEGADA
-          # Así el 15:35–18:05 entra porque llega 18:05
-          IN_TIME_FROM: "16:00"
+          # Inbound fast-fix: accept if DEPART OR ARRIVE within window (with a small buffer)
+          IN_TIME_FROM: "15:00"
           IN_TIME_TO: "23:00"
-          IN_TIME_MODE: "ARRIVE"
+          IN_TIME_MODE: "EITHER"
 
-          # === Other ===
           TZ: "Europe/Madrid"
           REFRESH_EVERY_DAYS: "6"
           EMAIL_SUBJECT: "AMS/RTM - BCN"
