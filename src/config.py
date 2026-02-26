@@ -27,15 +27,15 @@ class Config:
     direct_stops: int
 
     # Time window (local time at airports)
-    time_from: str  # "HH:MM"
-    time_to: str    # "HH:MM"
+    time_from: str
+    time_to: str
     timezone: ZoneInfo
 
     # Refresh policy
     refresh_every_days: int
 
-    # Email subject
-    subject: str
+    # Email subject base
+    subject_base: str
 
 
 def _req(name: str) -> str:
@@ -70,7 +70,7 @@ def load_config() -> Config:
 
     refresh_every_days = int(os.getenv("REFRESH_EVERY_DAYS", "6"))
 
-    subject = os.getenv("EMAIL_SUBJECT", "AMS/RTM - BCN").strip()
+    subject_base = os.getenv("EMAIL_SUBJECT", "AMS/RTM - BCN").strip()
 
     return Config(
         rapidapi_key=rapidapi_key,
@@ -90,5 +90,5 @@ def load_config() -> Config:
         time_to=time_to,
         timezone=tz,
         refresh_every_days=refresh_every_days,
-        subject=subject,
+        subject_base=subject_base,
     )
