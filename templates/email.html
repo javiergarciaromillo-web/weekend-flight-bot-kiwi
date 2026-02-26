@@ -1,0 +1,111 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>{{ subject }}</title>
+</head>
+<body style="font-family: Arial, Helvetica, sans-serif; background:#ffffff; color:#111; margin:0; padding:24px;">
+  <div style="max-width:860px; margin:0 auto;">
+    <div style="border:1px solid #e5e7eb; border-radius:10px; padding:18px 18px 8px 18px;">
+      <div style="font-size:20px; font-weight:700; margin-bottom:6px;">
+        {{ header }}
+      </div>
+      <div style="font-size:12px; color:#6b7280; margin-bottom:10px;">
+        Window {{ time_from }}–{{ time_to }} | {{ weeks }} weeks | Direct only | Currency EUR
+      </div>
+      <div style="font-size:12px; color:#6b7280; margin-bottom:14px;">
+        Last API refresh: {{ last_updated }} (email sent: {{ run_date }})
+      </div>
+    </div>
+
+    {% for block in blocks %}
+      <div style="margin-top:18px; border:1px solid #e5e7eb; border-radius:10px; padding:16px;">
+        <div style="display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;">
+          <div style="font-size:16px; font-weight:700;">
+            {{ block.title }}
+          </div>
+          <div style="font-size:12px; color:#6b7280;">
+            {{ block.subtitle }}
+          </div>
+        </div>
+
+        {% if block.best %}
+          <div style="margin-top:10px; padding:12px; border-radius:10px; background:#f9fafb; border:1px solid #eef2f7;">
+            <div style="font-size:12px; color:#6b7280; letter-spacing:0.06em;">
+              BEST OPTION
+            </div>
+            <div style="display:flex; align-items:baseline; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-top:6px;">
+              <div style="font-size:18px; font-weight:800;">
+                €{{ "%.2f"|format(block.best.price_eur) }}
+              </div>
+              <div style="font-size:12px; color:#6b7280;">
+                {{ block.best.provider }}
+              </div>
+            </div>
+
+            <div style="margin-top:8px; font-size:12px;">
+              Out: {{ block.best.flight_out }} {{ block.best.depart_out }}–{{ block.best.arrive_out }}
+              &nbsp;|&nbsp;
+              In: {{ block.best.flight_in }} {{ block.best.depart_in }}–{{ block.best.arrive_in }}
+            </div>
+
+            {% if block.delta is not none %}
+              <div style="margin-top:6px; font-size:12px;">
+                {% if block.delta > 0 %}
+                  <span style="color:#b91c1c; font-weight:700;">↑ {{ "%.2f"|format(block.delta) }}</span>
+                {% elif block.delta < 0 %}
+                  <span style="color:#047857; font-weight:700;">↓ {{ "%.2f"|format(-block.delta) }}</span>
+                {% else %}
+                  <span style="color:#6b7280;">= 0.00</span>
+                {% endif %}
+                <span style="color:#6b7280;"> vs previous run</span>
+              </div>
+            {% endif %}
+          </div>
+
+          {% if block.top %}
+            <div style="margin-top:12px;">
+              <div style="font-size:12px; color:#6b7280; margin-bottom:6px;">Top {{ top_n }}</div>
+              <table style="border-collapse:collapse; width:100%; font-size:12px;">
+                <thead>
+                  <tr>
+                    <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px 6px;">#</th>
+                    <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px 6px;">Price</th>
+                    <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px 6px;">Outbound</th>
+                    <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px 6px;">Inbound</th>
+                    <th style="text-align:left; border-bottom:1px solid #e5e7eb; padding:8px 6px;">Provider</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for o in block.top %}
+                    <tr>
+                      <td style="border-bottom:1px solid #f1f5f9; padding:8px 6px;">{{ loop.index }})</td>
+                      <td style="border-bottom:1px solid #f1f5f9; padding:8px 6px;">€{{ "%.2f"|format(o.price_eur) }}</td>
+                      <td style="border-bottom:1px solid #f1f5f9; padding:8px 6px;">
+                        {{ o.flight_out }} {{ o.depart_out }}–{{ o.arrive_out }}
+                      </td>
+                      <td style="border-bottom:1px solid #f1f5f9; padding:8px 6px;">
+                        {{ o.flight_in }} {{ o.depart_in }}–{{ o.arrive_in }}
+                      </td>
+                      <td style="border-bottom:1px solid #f1f5f9; padding:8px 6px;">{{ o.provider }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          {% endif %}
+        {% else %}
+          <div style="margin-top:10px; font-size:12px; color:#6b7280;">
+            No direct offers matching the time window.
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+
+    <div style="margin-top:18px; font-size:11px; color:#6b7280;">
+      Notes: prices depend on provider volatility. This report uses direct flights only and filters on departure times.
+    </div>
+  </div>
+</body>
+</html>
