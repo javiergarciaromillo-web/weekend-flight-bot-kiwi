@@ -13,6 +13,8 @@ def send_email(
     subject: str,
     html_body: str,
 ) -> None:
+    print(f"[MAIL] Sending to={to_addr} subject='{subject}' via {smtp_host}:{smtp_port} as {smtp_user}")
+
     msg = EmailMessage()
     msg["From"] = smtp_user
     msg["To"] = to_addr
@@ -24,3 +26,5 @@ def send_email(
         s.starttls()
         s.login(smtp_user, smtp_pass)
         s.send_message(msg)
+
+    print("[MAIL] Sent OK")
