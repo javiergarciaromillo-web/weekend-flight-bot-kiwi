@@ -7,34 +7,30 @@ from zoneinfo import ZoneInfo
 
 @dataclass(frozen=True)
 class Config:
-    # RapidAPI
     rapidapi_key: str
     rapidapi_host: str
     base_url: str
 
-    # Mail (SMTP)
     smtp_host: str
     smtp_port: int
     smtp_user: str
     smtp_pass: str
     email_to: str
 
-    # Search scope
     origins: tuple[str, ...]
     destination: str
     weeks: int
     top_n: int
     direct_stops: int
 
-    # Time window (local time at airports)
-    time_from: str
-    time_to: str
+    # separate time windows
+    out_time_from: str
+    out_time_to: str
+    in_time_from: str
+    in_time_to: str
+
     timezone: ZoneInfo
-
-    # Refresh policy
     refresh_every_days: int
-
-    # Email subject base
     subject_base: str
 
 
@@ -63,13 +59,14 @@ def load_config() -> Config:
     top_n = int(os.getenv("TOP_N", "3"))
     direct_stops = int(os.getenv("STOPS", "0"))
 
-    time_from = os.getenv("TIME_FROM", "16:00").strip()
-    time_to = os.getenv("TIME_TO", "23:00").strip()
+    # Defaults: keep outbound strict, inbound relaxed
+    out_time_from = os.getenv("OUT_TIME_FROM", "16:00").strip()
+    out_time_to = os.getenv("OUT_TIME_TO", "23:00").strip()
+    in_time_from = os.getenv("IN_TIME_FROM", "00:00").strip()
+    in_time_to = os.getenv("IN_TIME_TO", "23:59").strip()
 
     tz = ZoneInfo(os.getenv("TZ", "Europe/Madrid").strip())
-
     refresh_every_days = int(os.getenv("REFRESH_EVERY_DAYS", "6"))
-
     subject_base = os.getenv("EMAIL_SUBJECT", "AMS/RTM - BCN").strip()
 
     return Config(
@@ -86,8 +83,10 @@ def load_config() -> Config:
         weeks=weeks,
         top_n=top_n,
         direct_stops=direct_stops,
-        time_from=time_from,
-        time_to=time_to,
+        out_time_from=out_time_from,
+        out_time_to=out_time_to,
+        in_time_from=in_time_from,
+        in_time_to=in_time_to,
         timezone=tz,
         refresh_every_days=refresh_every_days,
         subject_base=subject_base,
