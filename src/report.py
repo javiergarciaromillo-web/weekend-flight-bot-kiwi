@@ -10,8 +10,8 @@ class Offer:
     price_eur: float
     carrier: str
     flight_out: str
-    depart_out: str  # HH:MM
-    arrive_out: str  # HH:MM
+    depart_out: str
+    arrive_out: str
     flight_in: str
     depart_in: str
     arrive_in: str
@@ -19,7 +19,6 @@ class Offer:
 
 
 def _parse_iso_local(dt_str: str) -> datetime:
-    # accepts "2026-03-05T21:40:00" and "2026-03-05T20:40:00Z"
     s = dt_str.replace("Z", "+00:00")
     return datetime.fromisoformat(s)
 
@@ -35,21 +34,19 @@ def _within_window(dt_str: str, time_from: str, time_to: str) -> bool:
 
 def extract_offers_with_stats(
     payload: Dict[str, Any],
-    time_from: str,
-    time_to: str,
+    out_from: str,
+    out_to: str,
+    in_from: str,
+    in_to: str,
 ) -> Tuple[List[Offer], Dict[str, Any]]:
-    """
-    Parse offers from the flights-scraper-real-time /flights/search-return response.
-
-    Returns:
-      - filtered offers (sorted by EUR price asc)
-      - stats for troubleshooting (counts + example departure/arrival times)
-    """
     data = payload.get("data") or {}
     itineraries = data.get("itineraries") or []
 
     parsed_total = 0
-    time_ok = 0
+    out_ok = 0
+    in_ok = 0
+    both_ok = 0
+
     offers: List[Offer] = []
     examples: List[Dict[str, str]] = []
 
@@ -57,7 +54,6 @@ def extract_offers_with_stats(
         try:
             outbound = it["outbound"]
             inbound = it["inbound"]
-
             out_seg = outbound["sectorSegments"][0]["segment"]
             in_seg = inbound["sectorSegments"][0]["segment"]
 
@@ -67,7 +63,6 @@ def extract_offers_with_stats(
             in_arrive_iso = in_seg["destination"]["localTime"]
 
             parsed_total += 1
-
             if len(examples) < 2:
                 examples.append(
                     {
@@ -78,16 +73,20 @@ def extract_offers_with_stats(
                     }
                 )
 
-            if not _within_window(out_depart_iso, time_from, time_to):
-                continue
-            if not _within_window(in_depart_iso, time_from, time_to):
+            ok_out = _within_window(out_depart_iso, out_from, out_to)
+            ok_in = _within_window(in_depart_iso, in_from, in_to)
+
+            if ok_out:
+                out_ok += 1
+            if ok_in:
+                in_ok += 1
+            if not (ok_out and ok_in):
                 continue
 
-            time_ok += 1
+            both_ok += 1
 
             price = it.get("price") or {}
             pe = price.get("priceEur") or {}
-
             if pe.get("amount") is not None:
                 price_eur = float(pe["amount"])
             elif price.get("amount") is not None:
@@ -124,7 +123,9 @@ def extract_offers_with_stats(
         "totalResultCount": payload.get("totalResultCount"),
         "itineraries_len": len(itineraries),
         "parsed_total": parsed_total,
-        "time_ok": time_ok,
+        "out_ok": out_ok,
+        "in_ok": in_ok,
+        "both_ok": both_ok,
         "examples": examples,
     }
     return offers, stats
