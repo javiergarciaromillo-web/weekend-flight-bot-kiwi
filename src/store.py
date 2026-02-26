@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 from dataclasses import dataclass
-from datetime import date
-from typing import Any, Dict, Optional, Tuple
+from typing import Optional, Tuple
 
 
 DB_PATH = os.getenv("DB_PATH", "data/flights.sqlite")
@@ -126,9 +124,6 @@ def get_previous_best_price(
     inbound_date: str,
     run_date: str,
 ) -> Optional[float]:
-    """
-    Get best_price_eur from the latest run_date < current run_date for same key.
-    """
     conn = _connect()
     try:
         cur = conn.execute(
@@ -150,11 +145,34 @@ def get_previous_best_price(
         conn.close()
 
 
-def get_latest_snapshot_date() -> Optional[str]:
+def get_latest_known_offers(
+    origin: str,
+    destination: str,
+    pattern: str,
+    outbound_date: str,
+    inbound_date: str,
+    run_date: str,
+) -> Optional[Tuple[Optional[float], str, str]]:
+    """
+    Returns (best_price_eur, offers_json, last_updated) from the latest snapshot
+    before the current run_date for the same key.
+    """
     conn = _connect()
     try:
-        cur = conn.execute("SELECT MAX(run_date) FROM snapshots;")
+        cur = conn.execute(
+            """
+            SELECT best_price_eur, offers_json, last_updated
+            FROM snapshots
+            WHERE origin=? AND destination=? AND pattern=? AND outbound_date=? AND inbound_date=?
+              AND run_date < ?
+            ORDER BY run_date DESC
+            LIMIT 1;
+            """,
+            (origin, destination, pattern, outbound_date, inbound_date, run_date),
+        )
         row = cur.fetchone()
-        return row[0] if row and row[0] else None
+        if not row:
+            return None
+        return row[0], row[1], row[2]
     finally:
         conn.close()
