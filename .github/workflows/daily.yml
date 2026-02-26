@@ -2,9 +2,6 @@ name: Daily flight email
 
 on:
   schedule:
-    # Runs daily. Cron is UTC.
-    # 07:15 Europe/Madrid is 06:15 UTC (winter) / 05:15 UTC (summer).
-    # Use 06:15 UTC as a reasonable default.
     - cron: "15 6 * * *"
   workflow_dispatch:
 
@@ -28,7 +25,8 @@ jobs:
       - name: Run
         env:
           RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
-          RAPIDAPI_HOST: ${{ secrets.RAPIDAPI_HOST }}
+          # IMPORTANT: force correct RapidAPI host for this API
+          RAPIDAPI_HOST: "flights-scraper-real-time.p.rapidapi.com"
           BASE_URL: "https://flights-scraper-real-time.p.rapidapi.com"
 
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
