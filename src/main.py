@@ -64,13 +64,11 @@ def main() -> None:
     client = FlightsClient(cfg)
     queries = generate_queries(today=today, weeks=cfg.weeks)
 
-    # weekends_map[week_start][route_key][pattern] = payload for template
     weekends_map: Dict[str, Dict[str, Dict[str, Any]]] = {}
 
     for q in queries:
         week_start_s = q.week_start.isoformat()
         week_end_s = q.inbound_date.isoformat()
-
         weekends_map.setdefault(week_start_s, {})
 
         for origin in cfg.origins:
@@ -93,7 +91,14 @@ def main() -> None:
                     stops=cfg.direct_stops,
                     adults=1,
                 )
-                offers, stats = extract_offers_with_stats(api.payload, cfg.time_from, cfg.time_to)
+
+                offers, stats = extract_offers_with_stats(
+                    api.payload,
+                    cfg.out_time_from,
+                    cfg.out_time_to,
+                    cfg.in_time_from,
+                    cfg.in_time_to,
+                )
                 offers = offers[: cfg.top_n]
                 best_price = offers[0].price_eur if offers else None
 
@@ -101,7 +106,8 @@ def main() -> None:
                     f"[API] {origin}->{cfg.destination} {outbound_s}/{inbound_s} "
                     f"status={api.status_code} total={stats.get('totalResultCount')} "
                     f"itins={stats.get('itineraries_len')} parsed={stats.get('parsed_total')} "
-                    f"time_ok={stats.get('time_ok')} examples={stats.get('examples')}"
+                    f"out_ok={stats.get('out_ok')} in_ok={stats.get('in_ok')} both_ok={stats.get('both_ok')} "
+                    f"examples={stats.get('examples')}"
                 )
 
             snapshot = Snapshot(
@@ -139,7 +145,6 @@ def main() -> None:
                 "week_end": week_end_s,
             }
 
-    # Build template-friendly list (sorted)
     weekends: List[Dict[str, Any]] = []
     for week_start_s in sorted(weekends_map.keys()):
         routes_out: List[Dict[str, Any]] = []
@@ -147,7 +152,6 @@ def main() -> None:
 
         for route_key in sorted(weekends_map[week_start_s].keys()):
             patterns_dict = weekends_map[week_start_s][route_key]
-
             ordered = ["THU_SUN", "THU_MON", "FRI_SUN", "FRI_MON"]
             patterns_list: List[Dict[str, Any]] = []
             for p in ordered:
@@ -157,12 +161,7 @@ def main() -> None:
                     if b and (best_overall is None or b.price_eur < best_overall):
                         best_overall = b.price_eur
 
-            routes_out.append(
-                {
-                    "route_label": route_key.replace("-", " ↔ "),
-                    "patterns": patterns_list,
-                }
-            )
+            routes_out.append({"route_label": route_key.replace("-", " ↔ "), "patterns": patterns_list})
 
         any_route = next(iter(weekends_map[week_start_s].values()))
         any_pat = next(iter(any_route.values()))
@@ -182,8 +181,10 @@ def main() -> None:
         {
             "subject": cfg.subject_base,
             "header": f"{','.join(cfg.origins)} ↔ {cfg.destination}",
-            "time_from": cfg.time_from,
-            "time_to": cfg.time_to,
+            "out_time_from": cfg.out_time_from,
+            "out_time_to": cfg.out_time_to,
+            "in_time_from": cfg.in_time_from,
+            "in_time_to": cfg.in_time_to,
             "weeks": cfg.weeks,
             "run_date": run_date,
             "last_updated": last_refresh or run_date,
@@ -192,7 +193,6 @@ def main() -> None:
     )
 
     subject = f"{cfg.subject_base} | {run_date}"
-
     send_email(
         smtp_host=cfg.smtp_host,
         smtp_port=cfg.smtp_port,
