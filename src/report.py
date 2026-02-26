@@ -27,17 +27,35 @@ def _hhmm(dt_str: str) -> str:
     return _parse_iso_local(dt_str).strftime("%H:%M")
 
 
-def _within_window(dt_str: str, time_from: str, time_to: str) -> bool:
-    t = _hhmm(dt_str)
-    return time_from <= t <= time_to
+def _within(t_hhmm: str, time_from: str, time_to: str) -> bool:
+    return time_from <= t_hhmm <= time_to
+
+
+def _time_ok(
+    depart_iso: str,
+    arrive_iso: str,
+    time_from: str,
+    time_to: str,
+    mode: str,  # DEPART | ARRIVE | EITHER
+) -> bool:
+    dep = _hhmm(depart_iso)
+    arr = _hhmm(arrive_iso)
+    if mode == "DEPART":
+        return _within(dep, time_from, time_to)
+    if mode == "ARRIVE":
+        return _within(arr, time_from, time_to)
+    # EITHER
+    return _within(dep, time_from, time_to) or _within(arr, time_from, time_to)
 
 
 def extract_offers_with_stats(
     payload: Dict[str, Any],
     out_from: str,
     out_to: str,
+    out_mode: str,
     in_from: str,
     in_to: str,
+    in_mode: str,
 ) -> Tuple[List[Offer], Dict[str, Any]]:
     data = payload.get("data") or {}
     itineraries = data.get("itineraries") or []
@@ -73,8 +91,8 @@ def extract_offers_with_stats(
                     }
                 )
 
-            ok_out = _within_window(out_depart_iso, out_from, out_to)
-            ok_in = _within_window(in_depart_iso, in_from, in_to)
+            ok_out = _time_ok(out_depart_iso, out_arrive_iso, out_from, out_to, out_mode)
+            ok_in = _time_ok(in_depart_iso, in_arrive_iso, in_from, in_to, in_mode)
 
             if ok_out:
                 out_ok += 1
@@ -118,8 +136,6 @@ def extract_offers_with_stats(
     offers.sort(key=lambda o: o.price_eur)
 
     stats = {
-        "status": payload.get("status"),
-        "status_code": payload.get("status_code"),
         "totalResultCount": payload.get("totalResultCount"),
         "itineraries_len": len(itineraries),
         "parsed_total": parsed_total,
@@ -127,5 +143,7 @@ def extract_offers_with_stats(
         "in_ok": in_ok,
         "both_ok": both_ok,
         "examples": examples,
+        "out_mode": out_mode,
+        "in_mode": in_mode,
     }
     return offers, stats
