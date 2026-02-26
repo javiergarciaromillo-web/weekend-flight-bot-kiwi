@@ -29,6 +29,10 @@ class Config:
     in_time_from: str
     in_time_to: str
 
+    # how to apply time window: DEPART | ARRIVE | EITHER
+    out_time_mode: str
+    in_time_mode: str
+
     timezone: ZoneInfo
     refresh_every_days: int
     subject_base: str
@@ -38,6 +42,13 @@ def _req(name: str) -> str:
     v = os.getenv(name, "").strip()
     if not v:
         raise RuntimeError(f"Missing required env var: {name}")
+    return v
+
+
+def _mode(name: str, default: str) -> str:
+    v = os.getenv(name, default).strip().upper()
+    if v not in {"DEPART", "ARRIVE", "EITHER"}:
+        raise RuntimeError(f"{name} must be one of DEPART|ARRIVE|EITHER, got: {v}")
     return v
 
 
@@ -59,11 +70,17 @@ def load_config() -> Config:
     top_n = int(os.getenv("TOP_N", "3"))
     direct_stops = int(os.getenv("STOPS", "0"))
 
-    # Defaults: keep outbound strict, inbound relaxed
     out_time_from = os.getenv("OUT_TIME_FROM", "16:00").strip()
     out_time_to = os.getenv("OUT_TIME_TO", "23:00").strip()
-    in_time_from = os.getenv("IN_TIME_FROM", "00:00").strip()
-    in_time_to = os.getenv("IN_TIME_TO", "23:59").strip()
+
+    in_time_from = os.getenv("IN_TIME_FROM", "16:00").strip()
+    in_time_to = os.getenv("IN_TIME_TO", "23:00").strip()
+
+    # Defaults chosen to match your concern:
+    # - outbound: departure window
+    # - inbound: arrival window (so 15:35-18:05 counts because arrival 18:05)
+    out_time_mode = _mode("OUT_TIME_MODE", "DEPART")
+    in_time_mode = _mode("IN_TIME_MODE", "ARRIVE")
 
     tz = ZoneInfo(os.getenv("TZ", "Europe/Madrid").strip())
     refresh_every_days = int(os.getenv("REFRESH_EVERY_DAYS", "6"))
@@ -87,6 +104,8 @@ def load_config() -> Config:
         out_time_to=out_time_to,
         in_time_from=in_time_from,
         in_time_to=in_time_to,
+        out_time_mode=out_time_mode,
+        in_time_mode=in_time_mode,
         timezone=tz,
         refresh_every_days=refresh_every_days,
         subject_base=subject_base,
