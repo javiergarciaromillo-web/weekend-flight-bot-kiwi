@@ -10,7 +10,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from src.config import load_config
 from src.flights_client import FlightsClient
-from src.planner import QueryKey, generate_queries
+from src.planner import generate_queries
 from src.report import Offer, extract_offers_with_stats
 from src.store import (
     Snapshot,
@@ -96,9 +96,22 @@ def main() -> None:
                     api.payload,
                     cfg.out_time_from,
                     cfg.out_time_to,
+                    cfg.out_time_mode,
                     cfg.in_time_from,
                     cfg.in_time_to,
+                    cfg.in_time_mode,
                 )
+
+                # DEBUG: dump first 10 filtered offers for one specific query
+                if origin == "AMS" and cfg.destination == "BCN" and outbound_s == "2026-03-05" and inbound_s == "2026-03-09":
+                    print("[DEBUG] Filtered offers (first 10) for AMS->BCN 2026-03-05/2026-03-09:")
+                    for i, o in enumerate(offers[:10], start=1):
+                        print(
+                            f"  {i}) €{o.price_eur:.2f} "
+                            f"OUT {o.flight_out} {o.depart_out}-{o.arrive_out} "
+                            f"| IN {o.flight_in} {o.depart_in}-{o.arrive_in}"
+                        )
+
                 offers = offers[: cfg.top_n]
                 best_price = offers[0].price_eur if offers else None
 
@@ -107,6 +120,7 @@ def main() -> None:
                     f"status={api.status_code} total={stats.get('totalResultCount')} "
                     f"itins={stats.get('itineraries_len')} parsed={stats.get('parsed_total')} "
                     f"out_ok={stats.get('out_ok')} in_ok={stats.get('in_ok')} both_ok={stats.get('both_ok')} "
+                    f"out_mode={stats.get('out_mode')} in_mode={stats.get('in_mode')} "
                     f"examples={stats.get('examples')}"
                 )
 
@@ -185,6 +199,8 @@ def main() -> None:
             "out_time_to": cfg.out_time_to,
             "in_time_from": cfg.in_time_from,
             "in_time_to": cfg.in_time_to,
+            "out_time_mode": cfg.out_time_mode,
+            "in_time_mode": cfg.in_time_mode,
             "weeks": cfg.weeks,
             "run_date": run_date,
             "last_updated": last_refresh or run_date,
