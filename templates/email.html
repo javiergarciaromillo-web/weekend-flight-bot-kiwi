@@ -6,129 +6,67 @@
   <title>{{ subject }}</title>
 </head>
 <body style="font-family: Arial, Helvetica, sans-serif; background:#ffffff; color:#111; margin:0; padding:24px;">
-  <div style="max-width:860px; margin:0 auto;">
+  <div style="max-width:900px; margin:0 auto;">
 
-    <!-- HEADER -->
-    <div style="border:1px solid #e5e7eb; border-radius:10px; padding:18px 18px 8px 18px;">
-      <div style="font-size:20px; font-weight:700; margin-bottom:6px;">
+    <div style="border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px;">
+      <div style="font-size:20px; font-weight:800; margin-bottom:6px;">
         {{ header }}
       </div>
-
-      <div style="font-size:12px; color:#6b7280; margin-bottom:10px;">
-        Outbound {{ out_time_from }}–{{ out_time_to }} |
-        Inbound {{ in_time_from }}–{{ in_time_to }} |
-        {{ weeks }} weeks |
-        Direct only |
-        EUR
+      <div style="font-size:12px; color:#6b7280;">
+        Window {{ time_from }}–{{ time_to }} | {{ weeks }} weeks | Timezone {{ tz_name }}
       </div>
-
-      <div style="font-size:12px; color:#6b7280; margin-bottom:14px;">
-        Last API refresh: {{ last_updated }} (email sent: {{ run_date }})
+      <div style="font-size:12px; color:#6b7280; margin-top:4px;">
+        Run: {{ run_date }}
       </div>
     </div>
 
-    <!-- WEEKENDS -->
     {% for w in weekends %}
-      <div style="margin-top:18px; border:1px solid #e5e7eb; border-radius:10px; padding:16px;">
-
-        <!-- Weekend title -->
-        <div style="font-size:16px; font-weight:700;">
-          Weekend starting {{ w.week_start }} (→ {{ w.week_end }})
+      <div style="margin-top:16px; border:1px solid #e5e7eb; border-radius:12px; padding:14px 16px;">
+        <div style="font-size:16px; font-weight:800; margin-bottom:10px;">
+          Weekend starting {{ w.week_start }} ({{ w.thu }} → {{ w.mon }})
         </div>
 
-        <!-- Best in weekend -->
-        <div style="margin-top:8px; padding:10px; border-radius:10px; background:#f9fafb; border:1px solid #eef2f7;">
-          <div style="font-size:12px; color:#6b7280;">
-            Best in this weekend:
-          </div>
-          <div style="font-size:18px; font-weight:800; margin-top:2px;">
-            {{ w.best_label }}
-          </div>
-        </div>
-
-        <!-- Routes (AMS↔BCN, RTM↔BCN) -->
-        {% for route in w.routes %}
-          <div style="margin-top:16px; font-size:14px; font-weight:700;">
-            {{ route.route_label }}
-          </div>
-
-          <!-- Patterns -->
-          {% for p in route.patterns %}
-            <div style="margin-top:10px; border:1px solid #eef2f7; border-radius:10px; padding:12px;">
-
-              <div style="display:flex; justify-content:space-between; flex-wrap:wrap;">
-                <div style="font-size:13px; font-weight:700;">
-                  {{ p.pattern_label }}
-                  <span style="font-size:12px; color:#6b7280;">
-                    ({{ p.outbound_date }} → {{ p.inbound_date }})
-                  </span>
-                </div>
-
-                {% if p.best %}
-                  <div style="font-size:14px; font-weight:800;">
-                    €{{ "%.2f"|format(p.best.price_eur) }}
-                  </div>
-                {% endif %}
-              </div>
-
-              {% if p.best %}
-
-                <!-- Best offer -->
-                <div style="margin-top:8px; font-size:12px;">
-                  1) €{{ "%.2f"|format(p.best.price_eur) }}
-                  {{ p.best.flight_out }}
-                  {{ p.best.depart_out }}–{{ p.best.arrive_out }}
-                  |
-                  {{ p.best.flight_in }}
-                  {{ p.best.depart_in }}–{{ p.best.arrive_in }}
-                </div>
-
-                <!-- Delta -->
-                {% if p.delta is not none %}
-                  <div style="margin-top:6px; font-size:12px;">
-                    {% if p.delta > 0 %}
-                      <span style="color:#b91c1c; font-weight:700;">
-                        ↑ {{ "%.2f"|format(p.delta) }}
-                      </span>
-                    {% elif p.delta < 0 %}
-                      <span style="color:#047857; font-weight:700;">
-                        ↓ {{ "%.2f"|format(-p.delta) }}
-                      </span>
-                    {% else %}
-                      <span style="color:#6b7280;">
-                        = 0.00
-                      </span>
-                    {% endif %}
-                    <span style="color:#6b7280;"> vs previous run</span>
-                  </div>
-                {% endif %}
-
-                <!-- Additional offers -->
-                {% if p.top and (p.top|length) > 1 %}
-                  <div style="margin-top:8px; font-size:12px; color:#374151;">
-                    {% for o in p.top[1:] %}
-                      {{ loop.index + 1 }})
-                      €{{ "%.2f"|format(o.price_eur) }}
-                      {{ o.flight_out }}
-                      {{ o.depart_out }}–{{ o.arrive_out }}
-                      |
-                      {{ o.flight_in }}
-                      {{ o.depart_in }}–{{ o.arrive_in }}
-                      <br/>
-                    {% endfor %}
-                  </div>
-                {% endif %}
-
-              {% else %}
-                <div style="margin-top:8px; font-size:12px; color:#6b7280;">
-                  No direct offers matching the selected time windows.
-                </div>
-              {% endif %}
-
+        {% for block in w.blocks %}
+          <div style="margin-top:12px;">
+            <div style="font-size:13px; font-weight:800;">
+              {{ block.title }}
+              <span style="font-size:12px; color:#6b7280; font-weight:600;">({{ block.date }})</span>
             </div>
-          {% endfor %}
-        {% endfor %}
 
+            {% if block.items and (block.items|length) > 0 %}
+              <div style="margin-top:8px; border:1px solid #eef2f7; border-radius:10px; padding:10px 12px;">
+                {% for it in block.items %}
+                  <div style="font-size:12px; line-height:1.8;">
+                    <span style="font-weight:800;">{{ it.flight_code }}</span>
+                    <span style="color:#374151;">{{ it.origin }}→{{ it.destination }}</span>
+                    <span style="color:#111;">{{ it.depart }}–{{ it.arrive }}</span>
+
+                    {% if it.price_eur is not none %}
+                      <span style="font-weight:900;">€{{ "%.2f"|format(it.price_eur) }}</span>
+                    {% else %}
+                      <span style="color:#6b7280;">n/a</span>
+                    {% endif %}
+
+                    {% if it.delta is not none %}
+                      {% if it.delta > 0 %}
+                        <span style="color:#b91c1c; font-weight:800;">↑ {{ "%.2f"|format(it.delta) }}</span>
+                      {% elif it.delta < 0 %}
+                        <span style="color:#047857; font-weight:800;">↓ {{ "%.2f"|format(-it.delta) }}</span>
+                      {% else %}
+                        <span style="color:#6b7280;">= 0.00</span>
+                      {% endif %}
+                      <span style="color:#6b7280;">vs prev</span>
+                    {% endif %}
+                  </div>
+                {% endfor %}
+              </div>
+            {% else %}
+              <div style="margin-top:8px; font-size:12px; color:#6b7280;">
+                No matches found.
+              </div>
+            {% endif %}
+          </div>
+        {% endfor %}
       </div>
     {% endfor %}
 
