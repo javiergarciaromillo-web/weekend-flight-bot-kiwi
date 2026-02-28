@@ -1,5 +1,6 @@
 from __future__ import annotations
-print("MODULE LOADED")
+
+print("MODULE LOADED", flush=True)
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, List
