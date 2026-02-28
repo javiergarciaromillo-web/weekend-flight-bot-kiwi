@@ -38,7 +38,7 @@ def _best_match_from_page_text(
         return None, None, None
 
     idx = page_text.find(flight_code)
-    window = page_text[max(0, idx - 700) : idx + 700]
+    window = page_text[max(0, idx - 900) : idx + 900]
 
     times = _extract_time_candidates(window)
     price = _extract_price_eur(window)
@@ -46,10 +46,116 @@ def _best_match_from_page_text(
     depart = times[0] if len(times) >= 1 else None
     arrive = times[1] if len(times) >= 2 else None
 
+    # Apply outbound time filter to DEPART time
     if depart and not _within(depart, time_from, time_to):
         return None, depart, arrive
 
     return price, depart, arrive
+
+
+def _click_first(page, candidates: list[tuple[str, str]], timeout_ms: int = 2500) -> bool:
+    """
+    candidates: list of (kind, value) where kind in {"role", "css", "text"}.
+    """
+    for kind, value in candidates:
+        try:
+            if kind == "role":
+                # value format: "button|NAME"
+                role, name = value.split("|", 1)
+                page.get_by_role(role, name=name).click(timeout=timeout_ms)
+                return True
+            if kind == "css":
+                page.locator(value).first.click(timeout=timeout_ms)
+                return True
+            if kind == "text":
+                page.get_by_text(value, exact=False).first.click(timeout=timeout_ms)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _fill_airport_field(page, label_text: str, code: str) -> bool:
+    """
+    Tries a bunch of strategies to fill "De" / "A" fields on Vueling public site.
+    """
+    # 1) get_by_label often works if the field is properly labelled
+    try:
+        page.get_by_label(label_text).click(timeout=2000)
+        page.get_by_label(label_text).fill("", timeout=2000)
+        page.get_by_label(label_text).type(code, delay=25)
+        page.wait_for_timeout(500)
+        page.keyboard.press("Enter")
+        return True
+    except Exception:
+        pass
+
+    # 2) placeholder based
+    selectors = [
+        f"input[placeholder='{label_text}']",
+        f"input[aria-label='{label_text}']",
+        f"input[aria-label*='{label_text}']",
+    ]
+    for sel in selectors:
+        try:
+            el = page.locator(sel).first
+            el.click(timeout=2000)
+            el.fill("", timeout=2000)
+            el.type(code, delay=25)
+            page.wait_for_timeout(500)
+            page.keyboard.press("Enter")
+            return True
+        except Exception:
+            continue
+
+    # 3) heuristic: click near visible text "De"/"A" then type
+    try:
+        page.get_by_text(label_text, exact=True).click(timeout=2000)
+        page.keyboard.type(code, delay=25)
+        page.wait_for_timeout(500)
+        page.keyboard.press("Enter")
+        return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _set_departure_date_best_effort(page, date_iso: str) -> bool:
+    """
+    Vueling often uses a datepicker with readonly inputs.
+    We try multiple approaches; if none work, artifacts will show what's needed.
+    """
+    # 1) native date input
+    try:
+        page.locator("input[type='date']").first.fill(date_iso, timeout=2000)
+        return True
+    except Exception:
+        pass
+
+    # 2) common names
+    for sel in [
+        "input[name*='departure']",
+        "input[name*='outbound']",
+        "input[id*='departure']",
+        "input[id*='outbound']",
+        "input[aria-label*='Ida']",
+        "input[placeholder*='Ida']",
+    ]:
+        try:
+            el = page.locator(sel).first
+            el.click(timeout=2000)
+            # remove readonly and set value via JS if needed
+            page.evaluate(
+                """(el, v) => { try { el.removeAttribute('readonly'); } catch(e) {} el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }""",
+                el,
+                date_iso,
+            )
+            return True
+        except Exception:
+            continue
+
+    return False
 
 
 def scrape_vueling_price(
@@ -90,82 +196,88 @@ def scrape_vueling_price(
         page.set_default_navigation_timeout(30000)
 
         try:
-            url = "https://tickets.vueling.com/booking/selectFlight"
+            # Start at the public Vueling site (more reliable than tickets.* redirects)
+            url = "https://www.vueling.com/es"
             print(f"[VUELING] goto {url}")
             page.goto(url, wait_until="load", timeout=30000)
-            page.wait_for_timeout(4000)
+            page.wait_for_timeout(2500)
 
-            # Cookies (best-effort)
-            for txt in ["Aceptar", "Aceptar todo", "Accept", "Accept all"]:
-                try:
-                    page.get_by_role("button", name=txt).click(timeout=2500)
-                    break
-                except Exception:
-                    pass
+            # Cookies banner
+            _click_first(
+                page,
+                [
+                    ("role", "button|OK, LAS ACEPTO"),
+                    ("role", "button|Aceptar"),
+                    ("role", "button|Aceptar todo"),
+                    ("text", "OK, LAS ACEPTO"),
+                    ("text", "ACEPTO"),
+                ],
+                timeout_ms=3000,
+            )
+            page.wait_for_timeout(1000)
 
-            page.wait_for_timeout(1500)
+            # Ensure we are in "Buscar vuelos" widget
+            # (If not visible, click "VUELOS" top nav)
+            _click_first(
+                page,
+                [
+                    ("text", "VUELOS"),
+                    ("text", "Buscar vuelos"),
+                ],
+                timeout_ms=2500,
+            )
+            page.wait_for_timeout(1200)
 
-            # Heurística: escribir códigos en los primeros inputs visibles
-            inputs = page.locator("input")
-            n = inputs.count()
-            typed = 0
-            for i in range(n):
-                try:
-                    el = inputs.nth(i)
-                    if not el.is_visible():
-                        continue
-                    el.click(timeout=1000)
-                    el.fill("", timeout=1000)
-                    if typed == 0:
-                        el.type(origin, delay=20)
-                        page.wait_for_timeout(700)
-                        page.keyboard.press("Enter")
-                        typed += 1
-                        continue
-                    if typed == 1:
-                        el.type(destination, delay=20)
-                        page.wait_for_timeout(700)
-                        page.keyboard.press("Enter")
-                        typed += 1
-                        break
-                except Exception:
-                    continue
+            # Force One-way ("Solo ida" / "Ida")
+            _click_first(
+                page,
+                [
+                    ("text", "Solo ida"),
+                    ("text", "Ida"),
+                ],
+                timeout_ms=2000,
+            )
+            page.wait_for_timeout(600)
 
-            # Fecha
-            try:
-                page.locator("input[type='date']").first.fill(date_iso, timeout=2000)
-            except Exception:
-                try:
-                    page.keyboard.type(date_iso, delay=15)
-                except Exception:
-                    pass
+            # Fill airports
+            ok_from = _fill_airport_field(page, "De", origin)
+            ok_to = _fill_airport_field(page, "A", destination)
 
-            # Buscar
-            clicked = False
-            for txt in ["Buscar", "Search", "Continuar", "Continue"]:
-                try:
-                    page.get_by_role("button", name=txt).click(timeout=3000)
-                    clicked = True
-                    break
-                except Exception:
-                    pass
-            if not clicked:
-                try:
-                    page.locator("button").first.click(timeout=2000)
-                except Exception:
-                    pass
+            # Set date (best-effort)
+            ok_date = _set_departure_date_best_effort(page, date_iso)
 
-            # Esperar resultados
+            # Set passengers: leave default 1 adult (your requirement)
+
+            # Click search
+            clicked = _click_first(
+                page,
+                [
+                    ("role", "button|BUSCAR"),
+                    ("text", "BUSCAR"),
+                    ("text", "Buscar"),
+                    ("role", "button|Buscar"),
+                ],
+                timeout_ms=4000,
+            )
+
+            # Wait for navigation / results
             page.wait_for_timeout(9000)
 
             txt = page.inner_text("body")
-            price, depart, arrive = _best_match_from_page_text(txt, flight_code, time_from, time_to)
 
+            has_code = flight_code in txt
+            has_euro = "€" in txt
+            print(
+                f"[VUELING][DEBUG] filled_from={ok_from} filled_to={ok_to} set_date={ok_date} clicked={clicked} "
+                f"{origin}->{destination} {date_iso} {flight_code} has_code={has_code} has_euro={has_euro}"
+            )
+
+            price, depart, arrive = _best_match_from_page_text(txt, flight_code, time_from, time_to)
             out["price_eur"] = price
             out["depart"] = depart
             out["arrive"] = arrive
 
-            # Debug artifacts
+            # Always save artifacts
             page.screenshot(
                 path=str(dbg / f"vueling_{origin}_{destination}_{date_iso}_{flight_code}.png"),
                 full_page=True,
