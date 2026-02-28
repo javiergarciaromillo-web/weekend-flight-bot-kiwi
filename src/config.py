@@ -1,41 +1,9 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from zoneinfo import ZoneInfo
-
-
-@dataclass(frozen=True)
-class Config:
-    rapidapi_key: str
-    rapidapi_host: str
-    base_url: str
-
-    smtp_host: str
-    smtp_port: int
-    smtp_user: str
-    smtp_pass: str
-    email_to: str
-
-    origins: tuple[str, ...]
-    destination: str
-    weeks: int
-    top_n: int
-    direct_stops: int
-
-    # separate time windows
-    out_time_from: str
-    out_time_to: str
-    in_time_from: str
-    in_time_to: str
-
-    # how to apply time window: DEPART | ARRIVE | EITHER
-    out_time_mode: str
-    in_time_mode: str
-
-    timezone: ZoneInfo
-    refresh_every_days: int
-    subject_base: str
 
 
 def _req(name: str) -> str:
@@ -45,68 +13,79 @@ def _req(name: str) -> str:
     return v
 
 
-def _mode(name: str, default: str) -> str:
-    v = os.getenv(name, default).strip().upper()
-    if v not in {"DEPART", "ARRIVE", "EITHER"}:
-        raise RuntimeError(f"{name} must be one of DEPART|ARRIVE|EITHER, got: {v}")
-    return v
+def _norm_flight_code(s: str) -> str:
+    t = re.sub(r"[^A-Za-z0-9]", "", (s or "").upper())
+    m = re.match(r"^([A-Z]{2}\d+)", t)
+    return m.group(1) if m else t
+
+
+@dataclass(frozen=True)
+class WatchItem:
+    weekday: str  # THU/FRI/SUN/MON
+    origin: str
+    destination: str
+    flight_code: str  # e.g. VY8313
+    provider: str  # "VUELING" or "TRANSAVIA"
+
+
+@dataclass(frozen=True)
+class Config:
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_pass: str
+    email_to: str
+
+    subject_base: str
+    tz: ZoneInfo
+    time_from: str
+    time_to: str
+    weeks: int
+
+    watchlist: tuple[WatchItem, ...]
 
 
 def load_config() -> Config:
-    rapidapi_key = _req("RAPIDAPI_KEY")
-    rapidapi_host = os.getenv("RAPIDAPI_HOST", "flights-scraper-real-time.p.rapidapi.com").strip()
-    base_url = os.getenv("BASE_URL", "https://flights-scraper-real-time.p.rapidapi.com").strip()
-
     smtp_host = _req("SMTP_HOST")
     smtp_port = int(_req("SMTP_PORT"))
     smtp_user = _req("SMTP_USER")
     smtp_pass = _req("SMTP_PASS")
     email_to = _req("EMAIL_TO")
 
-    origins = tuple(os.getenv("ORIGINS", "AMS,RTM").replace(" ", "").split(","))
-    destination = os.getenv("DESTINATION", "BCN").strip()
-
-    weeks = int(os.getenv("WEEKS", "3"))
-    top_n = int(os.getenv("TOP_N", "3"))
-    direct_stops = int(os.getenv("STOPS", "0"))
-
-    out_time_from = os.getenv("OUT_TIME_FROM", "16:00").strip()
-    out_time_to = os.getenv("OUT_TIME_TO", "23:00").strip()
-
-    in_time_from = os.getenv("IN_TIME_FROM", "16:00").strip()
-    in_time_to = os.getenv("IN_TIME_TO", "23:00").strip()
-
-    # Defaults chosen to match your concern:
-    # - outbound: departure window
-    # - inbound: arrival window (so 15:35-18:05 counts because arrival 18:05)
-    out_time_mode = _mode("OUT_TIME_MODE", "DEPART")
-    in_time_mode = _mode("IN_TIME_MODE", "ARRIVE")
-
-    tz = ZoneInfo(os.getenv("TZ", "Europe/Madrid").strip())
-    refresh_every_days = int(os.getenv("REFRESH_EVERY_DAYS", "6"))
     subject_base = os.getenv("EMAIL_SUBJECT", "AMS/RTM - BCN").strip()
+    tz = ZoneInfo(os.getenv("TZ", "Europe/Madrid").strip())
+    time_from = os.getenv("TIME_FROM", "16:00").strip()
+    time_to = os.getenv("TIME_TO", "23:00").strip()
+    weeks = int(os.getenv("WEEKS", "3").strip())
+
+    wl = (
+        # Thursday AMS->BCN (Vueling)
+        WatchItem("THU", "AMS", "BCN", _norm_flight_code("VY8313"), "VUELING"),
+        WatchItem("THU", "AMS", "BCN", _norm_flight_code("VY8310"), "VUELING"),
+        # Friday RTM->BCN (Transavia)
+        WatchItem("FRI", "RTM", "BCN", _norm_flight_code("HV6061"), "TRANSAVIA"),
+        # Friday AMS->BCN (Vueling)
+        WatchItem("FRI", "AMS", "BCN", _norm_flight_code("VY8307"), "VUELING"),
+        WatchItem("FRI", "AMS", "BCN", _norm_flight_code("VY8313"), "VUELING"),
+        # Sunday BCN->AMS (Vueling + Transavia)
+        WatchItem("SUN", "BCN", "AMS", _norm_flight_code("VY8311"), "VUELING"),
+        WatchItem("SUN", "BCN", "AMS", _norm_flight_code("VY8312"), "VUELING"),
+        WatchItem("SUN", "BCN", "AMS", _norm_flight_code("HV5134"), "TRANSAVIA"),
+        # Monday BCN->AMS (Vueling + Transavia)
+        WatchItem("MON", "BCN", "AMS", _norm_flight_code("VY8306"), "VUELING"),
+        WatchItem("MON", "BCN", "AMS", _norm_flight_code("HV5134"), "TRANSAVIA"),
+    )
 
     return Config(
-        rapidapi_key=rapidapi_key,
-        rapidapi_host=rapidapi_host,
-        base_url=base_url,
         smtp_host=smtp_host,
         smtp_port=smtp_port,
         smtp_user=smtp_user,
         smtp_pass=smtp_pass,
         email_to=email_to,
-        origins=origins,
-        destination=destination,
-        weeks=weeks,
-        top_n=top_n,
-        direct_stops=direct_stops,
-        out_time_from=out_time_from,
-        out_time_to=out_time_to,
-        in_time_from=in_time_from,
-        in_time_to=in_time_to,
-        out_time_mode=out_time_mode,
-        in_time_mode=in_time_mode,
-        timezone=tz,
-        refresh_every_days=refresh_every_days,
         subject_base=subject_base,
+        tz=tz,
+        time_from=time_from,
+        time_to=time_to,
+        weeks=weeks,
+        watchlist=wl,
     )
