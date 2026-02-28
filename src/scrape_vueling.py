@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from typing import Optional, Tuple
 
-from playwright.sync_api import Page, sync_playwright
+from playwright.sync_api import sync_playwright
 
 
 def _ensure_debug_dir() -> Path:
@@ -34,13 +34,11 @@ def _best_match_from_page_text(
     time_from: str,
     time_to: str,
 ) -> Tuple[Optional[float], Optional[str], Optional[str]]:
-    # Best-effort: find the line/block containing the flight_code, then parse times and price nearby.
     if flight_code not in page_text:
         return None, None, None
 
-    # Split into chunks around flight_code occurrences
     idx = page_text.find(flight_code)
-    window = page_text[max(0, idx - 500) : idx + 500]
+    window = page_text[max(0, idx - 700) : idx + 700]
 
     times = _extract_time_candidates(window)
     price = _extract_price_eur(window)
@@ -76,11 +74,26 @@ def scrape_vueling_price(
     }
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page(locale="es-ES")
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-blink-features=AutomationControlled"],
+        )
+        page = browser.new_page(
+            locale="es-ES",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/122.0.0.0 Safari/537.36"
+            ),
+        )
+        page.set_default_timeout(15000)
+        page.set_default_navigation_timeout(30000)
 
         try:
-            page.goto("https://tickets.vueling.com/booking/selectFlight", wait_until="domcontentloaded", timeout=60000)
+            url = "https://tickets.vueling.com/booking/selectFlight"
+            print(f"[VUELING] goto {url}")
+            page.goto(url, wait_until="load", timeout=30000)
+            page.wait_for_timeout(4000)
 
             # Cookies (best-effort)
             for txt in ["Aceptar", "Aceptar todo", "Accept", "Accept all"]:
@@ -90,16 +103,11 @@ def scrape_vueling_price(
                 except Exception:
                     pass
 
-            # NOTE: Vueling UI changes often. We use best-effort selectors + page text fallback.
-            # Try to fill origin/destination by searching for input fields.
-            # If this fails, the debug screenshot + html will help adjust.
             page.wait_for_timeout(1500)
 
-            # Try to find any input and type airport code then pick dropdown
+            # Heurística: escribir códigos en los primeros inputs visibles
             inputs = page.locator("input")
             n = inputs.count()
-
-            # Heuristic: type origin/destination in first two visible text inputs
             typed = 0
             for i in range(n):
                 try:
@@ -107,34 +115,32 @@ def scrape_vueling_price(
                     if not el.is_visible():
                         continue
                     el.click(timeout=1000)
-                    # clear and type
                     el.fill("", timeout=1000)
                     if typed == 0:
                         el.type(origin, delay=20)
-                        page.wait_for_timeout(600)
+                        page.wait_for_timeout(700)
                         page.keyboard.press("Enter")
                         typed += 1
                         continue
                     if typed == 1:
                         el.type(destination, delay=20)
-                        page.wait_for_timeout(600)
+                        page.wait_for_timeout(700)
                         page.keyboard.press("Enter")
                         typed += 1
                         break
                 except Exception:
                     continue
 
-            # Date: try any input[type=date], else type into any visible date-like input
+            # Fecha
             try:
                 page.locator("input[type='date']").first.fill(date_iso, timeout=2000)
             except Exception:
-                # fallback: type date_iso into a focused field if calendar uses text
                 try:
                     page.keyboard.type(date_iso, delay=15)
                 except Exception:
                     pass
 
-            # Search button (best-effort)
+            # Buscar
             clicked = False
             for txt in ["Buscar", "Search", "Continuar", "Continue"]:
                 try:
@@ -144,16 +150,14 @@ def scrape_vueling_price(
                 except Exception:
                     pass
             if not clicked:
-                # fallback: click any primary button
                 try:
                     page.locator("button").first.click(timeout=2000)
                 except Exception:
                     pass
 
-            # Wait for results to load
-            page.wait_for_timeout(8000)
+            # Esperar resultados
+            page.wait_for_timeout(9000)
 
-            # Extract from full page text (robust fallback)
             txt = page.inner_text("body")
             price, depart, arrive = _best_match_from_page_text(txt, flight_code, time_from, time_to)
 
@@ -161,14 +165,22 @@ def scrape_vueling_price(
             out["depart"] = depart
             out["arrive"] = arrive
 
-            # Save debug artifacts always (first runs are about tuning)
-            page.screenshot(path=str(dbg / f"vueling_{origin}_{destination}_{date_iso}_{flight_code}.png"), full_page=True)
-            (dbg / f"vueling_{origin}_{destination}_{date_iso}_{flight_code}.txt").write_text(txt, encoding="utf-8")
+            # Debug artifacts
+            page.screenshot(
+                path=str(dbg / f"vueling_{origin}_{destination}_{date_iso}_{flight_code}.png"),
+                full_page=True,
+            )
+            (dbg / f"vueling_{origin}_{destination}_{date_iso}_{flight_code}.txt").write_text(
+                txt, encoding="utf-8"
+            )
 
         except Exception as e:
             out["error"] = str(e)
             try:
-                page.screenshot(path=str(dbg / f"vueling_ERROR_{origin}_{destination}_{date_iso}_{flight_code}.png"), full_page=True)
+                page.screenshot(
+                    path=str(dbg / f"vueling_ERROR_{origin}_{destination}_{date_iso}_{flight_code}.png"),
+                    full_page=True,
+                )
             except Exception:
                 pass
         finally:
