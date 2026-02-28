@@ -69,7 +69,6 @@ def _run_item(cfg: Config, item: WatchItem, dep_date: str) -> Dict[str, Any]:
     if price is not None and prev is not None:
         delta = float(price) - float(prev)
 
-    # Update history (only if we got a price)
     set_last_price(key, price)
 
     return {
@@ -87,12 +86,13 @@ def _run_item(cfg: Config, item: WatchItem, dep_date: str) -> Dict[str, Any]:
 
 
 def main() -> None:
+    print("Starting weekend watchlist run...")
+
     cfg = load_config()
     today = date.today()
     run_date = today.isoformat()
 
     weekends = generate_weekend_windows(today=today, weeks=cfg.weeks)
-
     email_weekends: List[Dict[str, Any]] = []
 
     for w in weekends:
@@ -108,7 +108,7 @@ def main() -> None:
                 lines.append(r)
                 print(
                     f"[SCRAPE] {it.provider} {it.origin}->{it.destination} {d} {it.flight_code} "
-                    f"price={r.get('price_eur')} depart={r.get('depart')} err={r.get('error')}"
+                    f"price={r.get('price_eur')} depart={r.get('depart')} arrive={r.get('arrive')} err={r.get('error')}"
                 )
 
             blocks.append(
