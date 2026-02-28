@@ -40,7 +40,7 @@ jobs:
           TIME_TO: "23:00"
           WEEKS: "3"
         run: |
-          python -m src.main
+          python -u -m src.main
 
       - name: Upload debug artifacts
         if: always()
