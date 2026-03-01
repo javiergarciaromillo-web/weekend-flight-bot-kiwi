@@ -38,7 +38,7 @@ def _best_match_from_page_text(
         return None, None, None
 
     idx = page_text.find(flight_code)
-    window = page_text[max(0, idx - 700) : idx + 700]
+    window = page_text[max(0, idx - 900) : idx + 900]
 
     times = _extract_time_candidates(window)
     price = _extract_price_eur(window)
@@ -46,10 +46,128 @@ def _best_match_from_page_text(
     depart = times[0] if len(times) >= 1 else None
     arrive = times[1] if len(times) >= 2 else None
 
+    # Apply time filter to DEPART time
     if depart and not _within(depart, time_from, time_to):
         return None, depart, arrive
 
     return price, depart, arrive
+
+
+def _click_first(page, candidates: list[tuple[str, str]], timeout_ms: int = 2500) -> bool:
+    for kind, value in candidates:
+        try:
+            if kind == "role":
+                role, name = value.split("|", 1)
+                page.get_by_role(role, name=name).click(timeout=timeout_ms)
+                return True
+            if kind == "css":
+                page.locator(value).first.click(timeout=timeout_ms)
+                return True
+            if kind == "text":
+                page.get_by_text(value, exact=False).first.click(timeout=timeout_ms)
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _fill_airport_field(page, label_hints: list[str], code: str) -> bool:
+    # Try by label
+    for lbl in label_hints:
+        try:
+            page.get_by_label(lbl).click(timeout=2000)
+            page.get_by_label(lbl).fill("", timeout=2000)
+            page.get_by_label(lbl).type(code, delay=25)
+            page.wait_for_timeout(600)
+            page.keyboard.press("Enter")
+            return True
+        except Exception:
+            pass
+
+    # Try common input attributes
+    selectors = [
+        "input[name*='origin']",
+        "input[id*='origin']",
+        "input[name*='from']",
+        "input[id*='from']",
+        "input[aria-label*='Origen']",
+        "input[aria-label*='Salida']",
+        "input[aria-label*='Destino']",
+        "input[name*='destination']",
+        "input[id*='destination']",
+        "input[name*='to']",
+        "input[id*='to']",
+    ]
+
+    # Heuristic: just type into the first visible input that looks like an airport field
+    inputs = page.locator("input")
+    n = inputs.count()
+    for i in range(n):
+        try:
+            el = inputs.nth(i)
+            if not el.is_visible():
+                continue
+            # skip date inputs
+            t = (el.get_attribute("type") or "").lower()
+            if t == "date":
+                continue
+            el.click(timeout=1500)
+            el.fill("", timeout=1500)
+            el.type(code, delay=25)
+            page.wait_for_timeout(600)
+            page.keyboard.press("Enter")
+            return True
+        except Exception:
+            continue
+
+    # Fallback: try known selectors
+    for sel in selectors:
+        try:
+            el = page.locator(sel).first
+            if not el.is_visible():
+                continue
+            el.click(timeout=2000)
+            el.fill("", timeout=2000)
+            el.type(code, delay=25)
+            page.wait_for_timeout(600)
+            page.keyboard.press("Enter")
+            return True
+        except Exception:
+            continue
+
+    return False
+
+
+def _set_departure_date_best_effort(page, date_iso: str) -> bool:
+    # native date input
+    try:
+        page.locator("input[type='date']").first.fill(date_iso, timeout=2000)
+        return True
+    except Exception:
+        pass
+
+    # common date fields
+    for sel in [
+        "input[name*='departure']",
+        "input[id*='departure']",
+        "input[aria-label*='Ida']",
+        "input[placeholder*='Ida']",
+        "input[aria-label*='Salida']",
+        "input[placeholder*='Salida']",
+    ]:
+        try:
+            el = page.locator(sel).first
+            el.click(timeout=2000)
+            page.evaluate(
+                """(el, v) => { try { el.removeAttribute('readonly'); } catch(e) {} el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }""",
+                el,
+                date_iso,
+            )
+            return True
+        except Exception:
+            continue
+
+    return False
 
 
 def scrape_transavia_price(
@@ -93,67 +211,50 @@ def scrape_transavia_price(
             url = "https://www.transavia.com/reservar/es-es/buscar-un-vuelo"
             print(f"[TRANSAVIA] goto {url}")
             page.goto(url, wait_until="load", timeout=30000)
-            page.wait_for_timeout(4000)
+            page.wait_for_timeout(2500)
 
-            for txt in ["Aceptar", "Aceptar todo", "Accept", "Accept all"]:
-                try:
-                    page.get_by_role("button", name=txt).click(timeout=2500)
-                    break
-                except Exception:
-                    pass
+            # Cookies
+            _click_first(
+                page,
+                [
+                    ("text", "Aceptar"),
+                    ("text", "Aceptar todo"),
+                    ("text", "Accept"),
+                    ("text", "Accept all"),
+                ],
+                timeout_ms=3500,
+            )
+            page.wait_for_timeout(800)
 
-            page.wait_for_timeout(1500)
+            # Fill origin / destination (best-effort)
+            ok_from = _fill_airport_field(page, ["Origen", "Salida", "From"], origin)
+            ok_to = _fill_airport_field(page, ["Destino", "Llegada", "To"], destination)
 
-            inputs = page.locator("input")
-            n = inputs.count()
-            typed = 0
-            for i in range(n):
-                try:
-                    el = inputs.nth(i)
-                    if not el.is_visible():
-                        continue
-                    el.click(timeout=1000)
-                    el.fill("", timeout=1000)
-                    if typed == 0:
-                        el.type(origin, delay=20)
-                        page.wait_for_timeout(700)
-                        page.keyboard.press("Enter")
-                        typed += 1
-                        continue
-                    if typed == 1:
-                        el.type(destination, delay=20)
-                        page.wait_for_timeout(700)
-                        page.keyboard.press("Enter")
-                        typed += 1
-                        break
-                except Exception:
-                    continue
+            ok_date = _set_departure_date_best_effort(page, date_iso)
 
-            try:
-                page.locator("input[type='date']").first.fill(date_iso, timeout=2000)
-            except Exception:
-                try:
-                    page.keyboard.type(date_iso, delay=15)
-                except Exception:
-                    pass
+            # Click search
+            clicked = _click_first(
+                page,
+                [
+                    ("text", "Buscar"),
+                    ("text", "Buscar vuelos"),
+                    ("text", "Ver vuelos"),
+                    ("text", "Mostrar vuelos"),
+                    ("text", "Search"),
+                ],
+                timeout_ms=5000,
+            )
 
-            clicked = False
-            for txt in ["Buscar", "Search", "Mostrar vuelos", "Ver vuelos", "Continue", "Continuar"]:
-                try:
-                    page.get_by_role("button", name=txt).click(timeout=3000)
-                    clicked = True
-                    break
-                except Exception:
-                    pass
-            if not clicked:
-                try:
-                    page.locator("button").first.click(timeout=2000)
-                except Exception:
-                    pass
-
-            page.wait_for_timeout(10000)
+            page.wait_for_timeout(9000)
 
             txt = page.inner_text("body")
+            has_code = flight_code in txt
+            has_euro = "€" in txt
+            print(
+                f"[TRANSAVIA][DEBUG] filled_from={ok_from} filled_to={ok_to} set_date={ok_date} clicked={clicked} "
+                f"{origin}->{destination} {date_iso} {flight_code} has_code={has_code} has_euro={has_euro}"
+            )
+
             price, depart, arrive = _best_match_from_page_text(txt, flight_code, time_from, time_to)
 
             out["price_eur"] = price
