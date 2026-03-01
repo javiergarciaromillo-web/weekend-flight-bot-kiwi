@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -34,6 +35,7 @@ def _best_match_from_page_text(
     time_from: str,
     time_to: str,
 ) -> Tuple[Optional[float], Optional[str], Optional[str]]:
+    # note: flight_code might not appear on Transavia UI; this will often be None
     if flight_code not in page_text:
         return None, None, None
 
@@ -46,123 +48,70 @@ def _best_match_from_page_text(
     depart = times[0] if len(times) >= 1 else None
     arrive = times[1] if len(times) >= 2 else None
 
-    # Apply time filter to DEPART time
     if depart and not _within(depart, time_from, time_to):
         return None, depart, arrive
 
     return price, depart, arrive
 
 
-def _click_first(page, candidates: list[tuple[str, str]], timeout_ms: int = 2500) -> bool:
-    for kind, value in candidates:
+def _click_cookie_accept(page) -> None:
+    for txt in ["Aceptar", "Aceptar todo", "Accept", "Accept all"]:
         try:
-            if kind == "role":
-                role, name = value.split("|", 1)
-                page.get_by_role(role, name=name).click(timeout=timeout_ms)
-                return True
-            if kind == "css":
-                page.locator(value).first.click(timeout=timeout_ms)
-                return True
-            if kind == "text":
-                page.get_by_text(value, exact=False).first.click(timeout=timeout_ms)
-                return True
-        except Exception:
-            continue
-    return False
-
-
-def _fill_airport_field(page, label_hints: list[str], code: str) -> bool:
-    # Try by label
-    for lbl in label_hints:
-        try:
-            page.get_by_label(lbl).click(timeout=2000)
-            page.get_by_label(lbl).fill("", timeout=2000)
-            page.get_by_label(lbl).type(code, delay=25)
-            page.wait_for_timeout(600)
-            page.keyboard.press("Enter")
-            return True
+            page.get_by_text(txt, exact=False).first.click(timeout=2500)
+            return
         except Exception:
             pass
 
-    # Try common input attributes
-    selectors = [
-        "input[name*='origin']",
-        "input[id*='origin']",
-        "input[name*='from']",
-        "input[id*='from']",
-        "input[aria-label*='Origen']",
-        "input[aria-label*='Salida']",
-        "input[aria-label*='Destino']",
-        "input[name*='destination']",
-        "input[id*='destination']",
-        "input[name*='to']",
-        "input[id*='to']",
-    ]
 
-    # Heuristic: just type into the first visible input that looks like an airport field
-    inputs = page.locator("input")
-    n = inputs.count()
-    for i in range(n):
-        try:
-            el = inputs.nth(i)
-            if not el.is_visible():
-                continue
-            # skip date inputs
-            t = (el.get_attribute("type") or "").lower()
-            if t == "date":
-                continue
-            el.click(timeout=1500)
-            el.fill("", timeout=1500)
-            el.type(code, delay=25)
-            page.wait_for_timeout(600)
-            page.keyboard.press("Enter")
-            return True
-        except Exception:
-            continue
-
-    # Fallback: try known selectors
-    for sel in selectors:
-        try:
-            el = page.locator(sel).first
-            if not el.is_visible():
-                continue
-            el.click(timeout=2000)
-            el.fill("", timeout=2000)
-            el.type(code, delay=25)
-            page.wait_for_timeout(600)
-            page.keyboard.press("Enter")
-            return True
-        except Exception:
-            continue
-
-    return False
-
-
-def _set_departure_date_best_effort(page, date_iso: str) -> bool:
-    # native date input
+def _fill_airport_simple(page, code: str) -> bool:
+    # best-effort: type into focused input
     try:
-        page.locator("input[type='date']").first.fill(date_iso, timeout=2000)
+        page.keyboard.type(code, delay=25)
+        page.wait_for_timeout(500)
+        page.keyboard.press("Enter")
         return True
+    except Exception:
+        return False
+
+
+def _open_datepicker_and_pick(page, date_iso: str, dbg: Path, tag: str) -> bool:
+    d = datetime.fromisoformat(date_iso)
+    day = str(d.day)
+
+    opened = False
+    for sel in [
+        "text=Datum",
+        "text=Fecha",
+        "text=Vertrekdatum",
+        "input[type='date']",
+        "input[placeholder*='Fecha']",
+        "input[aria-label*='Fecha']",
+    ]:
+        try:
+            page.locator(sel).first.click(timeout=2500)
+            opened = True
+            break
+        except Exception:
+            continue
+
+    page.wait_for_timeout(1500)
+    try:
+        page.screenshot(path=str(dbg / f"transavia_calendar_{tag}.png"), full_page=True)
     except Exception:
         pass
 
-    # common date fields
-    for sel in [
-        "input[name*='departure']",
-        "input[id*='departure']",
-        "input[aria-label*='Ida']",
-        "input[placeholder*='Ida']",
-        "input[aria-label*='Salida']",
-        "input[placeholder*='Salida']",
+    if not opened:
+        return False
+
+    for c in [
+        f"button:has-text('{day}')",
+        f"[role='button']:has-text('{day}')",
+        f"[role='gridcell']:has-text('{day}')",
+        f"td:has-text('{day}')",
     ]:
         try:
-            el = page.locator(sel).first
-            el.click(timeout=2000)
-            page.evaluate(
-                """(el, v) => { try { el.removeAttribute('readonly'); } catch(e) {} el.value = v; el.dispatchEvent(new Event('input', {bubbles:true})); el.dispatchEvent(new Event('change', {bubbles:true})); }""",
-                el,
-                date_iso,
-            )
+            page.locator(c).first.click(timeout=2500)
+            page.wait_for_timeout(600)
             return True
         except Exception:
             continue
@@ -213,37 +162,36 @@ def scrape_transavia_price(
             page.goto(url, wait_until="load", timeout=30000)
             page.wait_for_timeout(2500)
 
-            # Cookies
-            _click_first(
-                page,
-                [
-                    ("text", "Aceptar"),
-                    ("text", "Aceptar todo"),
-                    ("text", "Accept"),
-                    ("text", "Accept all"),
-                ],
-                timeout_ms=3500,
-            )
+            _click_cookie_accept(page)
             page.wait_for_timeout(800)
 
-            # Fill origin / destination (best-effort)
-            ok_from = _fill_airport_field(page, ["Origen", "Salida", "From"], origin)
-            ok_to = _fill_airport_field(page, ["Destino", "Llegada", "To"], destination)
+            # Focus first input and type origin
+            try:
+                page.locator("input").first.click(timeout=2000)
+            except Exception:
+                pass
+            ok_from = _fill_airport_simple(page, origin)
 
-            ok_date = _set_departure_date_best_effort(page, date_iso)
+            # Try move to next field (TAB) then type destination
+            try:
+                page.keyboard.press("Tab")
+            except Exception:
+                pass
+            ok_to = _fill_airport_simple(page, destination)
 
-            # Click search
-            clicked = _click_first(
-                page,
-                [
-                    ("text", "Buscar"),
-                    ("text", "Buscar vuelos"),
-                    ("text", "Ver vuelos"),
-                    ("text", "Mostrar vuelos"),
-                    ("text", "Search"),
-                ],
-                timeout_ms=5000,
+            ok_date = _open_datepicker_and_pick(
+                page, date_iso, dbg, tag=f"{origin}_{destination}_{date_iso}_{flight_code}"
             )
+
+            # search
+            clicked = False
+            for txt in ["Buscar", "Ver vuelos", "Search", "Zoeken"]:
+                try:
+                    page.get_by_text(txt, exact=False).first.click(timeout=4000)
+                    clicked = True
+                    break
+                except Exception:
+                    pass
 
             page.wait_for_timeout(9000)
 
@@ -256,26 +204,17 @@ def scrape_transavia_price(
             )
 
             price, depart, arrive = _best_match_from_page_text(txt, flight_code, time_from, time_to)
-
             out["price_eur"] = price
             out["depart"] = depart
             out["arrive"] = arrive
 
-            page.screenshot(
-                path=str(dbg / f"transavia_{origin}_{destination}_{date_iso}_{flight_code}.png"),
-                full_page=True,
-            )
-            (dbg / f"transavia_{origin}_{destination}_{date_iso}_{flight_code}.txt").write_text(
-                txt, encoding="utf-8"
-            )
+            page.screenshot(path=str(dbg / f"transavia_{origin}_{destination}_{date_iso}_{flight_code}.png"), full_page=True)
+            (dbg / f"transavia_{origin}_{destination}_{date_iso}_{flight_code}.txt").write_text(txt, encoding="utf-8")
 
         except Exception as e:
             out["error"] = str(e)
             try:
-                page.screenshot(
-                    path=str(dbg / f"transavia_ERROR_{origin}_{destination}_{date_iso}_{flight_code}.png"),
-                    full_page=True,
-                )
+                page.screenshot(path=str(dbg / f"transavia_ERROR_{origin}_{destination}_{date_iso}_{flight_code}.png"), full_page=True)
             except Exception:
                 pass
         finally:
