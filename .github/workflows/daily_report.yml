@@ -1,4 +1,4 @@
-name: Daily Flight Report
+name: Weekend Flight Bot
 
 on:
   workflow_dispatch:
@@ -6,19 +6,19 @@ on:
     - cron: "0 6 * * *"
 
 jobs:
-  run-report:
+  run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Python
+      - name: Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           pip install -r requirements.txt
           playwright install chromium
