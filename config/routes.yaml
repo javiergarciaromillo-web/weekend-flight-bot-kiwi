@@ -1,0 +1,19 @@
+email:
+  to: "javiergarciaromillo@gmail.com"
+  from: "javiergarciaromillo@gmail.com"
+
+search:
+  weeks_ahead: 5
+  outbound_days: [3, 4]   # Thursday=3, Friday=4
+  inbound_days: [6, 0]    # Sunday=6, Monday=0
+  min_departure_time: "16:00"
+  direct_only: true
+  allowed_airlines:
+    - "Vueling"
+    - "Transavia"
+
+routes:
+  - origin: "AMS"
+    destination: "BCN"
+  - origin: "RTM"
+    destination: "BCN"
