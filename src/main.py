@@ -10,13 +10,13 @@ from src.filters import filter_options
 from src.models import Route, SearchConfig
 from src.planner import next_n_weeks_weekend_pairs
 from src.report import build_html_report
-from src.sample_provider import get_sample_options
+from src.scrapers.skyscanner import scrape_skyscanner
 from src.store import init_db, store_options
 
 
-def load_config() -> tuple[SearchConfig, list[Route], str, str]:
+def load_config() -> tuple[SearchConfig, list[Route]]:
     cfg_path = Path("config/routes.yaml")
-    raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    raw = yaml.safe_load(cfg_path.read_text())
 
     min_departure_time = datetime.strptime(
         raw["search"]["min_departure_time"], "%H:%M"
@@ -36,15 +36,14 @@ def load_config() -> tuple[SearchConfig, list[Route], str, str]:
         for item in raw["routes"]
     ]
 
-    email_to = raw["email"]["to"]
-    email_from = raw["email"]["from"]
-    return search_cfg, routes, email_to, email_from
+    return search_cfg, routes
 
 
 def main() -> None:
     run_date = date.today()
 
-    search_cfg, routes, _, _ = load_config()
+    search_cfg, routes = load_config()
+
     pairs = next_n_weeks_weekend_pairs(
         start_date=run_date,
         weeks_ahead=search_cfg.weeks_ahead,
@@ -54,18 +53,19 @@ def main() -> None:
 
     init_db()
 
-    raw_options = get_sample_options(routes, pairs)
+    raw_options = scrape_skyscanner(routes, pairs)
+
     filtered_options = filter_options(raw_options, search_cfg)
 
     store_options(run_date, filtered_options)
 
     html = build_html_report(run_date, filtered_options)
+
     subject = f"Weekend Flight Bot - {run_date.isoformat()}"
 
     send_email_html(subject, html)
 
-    print(f"Stored {len(filtered_options)} options")
-    print("Email sent successfully")
+    print("Flights scraped:", len(filtered_options))
 
 
 if __name__ == "__main__":
