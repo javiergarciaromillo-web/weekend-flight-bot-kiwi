@@ -10,20 +10,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Install Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
           pip install -r requirements.txt
+          playwright install chromium
 
-      - name: Run report
+      - name: Run bot
         env:
           GMAIL_SMTP_USER: ${{ secrets.GMAIL_SMTP_USER }}
           GMAIL_SMTP_APP_PASSWORD: ${{ secrets.GMAIL_SMTP_APP_PASSWORD }}
@@ -31,8 +31,8 @@ jobs:
         run: |
           python -m src.main
 
-      - name: Upload database
+      - name: Upload DB
         uses: actions/upload-artifact@v4
         with:
-          name: prices-db
+          name: flight-history
           path: data/prices.db
