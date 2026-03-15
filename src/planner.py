@@ -2,11 +2,9 @@ from datetime import date, timedelta
 
 
 def generate_weekend_pairs(start_date: date, weeks: int):
-
     pairs = []
 
     for i in range(weeks * 7):
-
         d = start_date + timedelta(days=i)
 
         if d.weekday() not in [3, 4]:
