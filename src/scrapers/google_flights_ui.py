@@ -54,11 +54,10 @@ def _maybe_handle_google_interstitials(page) -> None:
     )
 
 
-def _collect_candidate_texts(page, origin: str) -> list[str]:
+def _collect_candidate_texts(page) -> list[str]:
     """
-    Extract the entire visible text of the page.
-    Google Flights changes DOM frequently so parsing
-    the whole page is the most robust approach.
+    Extract the entire visible page text.
+    This is more stable than relying on DOM selectors.
     """
 
     texts: list[str] = []
@@ -75,7 +74,7 @@ def _collect_candidate_texts(page, origin: str) -> list[str]:
 
 def _extract_best_price_from_texts(texts: list[str]) -> float | None:
     """
-    Extract € prices from page text and return lowest realistic one.
+    Extract € prices from page text and return lowest realistic value.
     """
 
     if not texts:
@@ -83,7 +82,7 @@ def _extract_best_price_from_texts(texts: list[str]) -> float | None:
 
     all_text = "\n".join(texts)
 
-    matches = re.findall(r"€\s?(\d{2,4})", all_text)
+    matches = re.findall(r"[€]\s?(\d{2,4}(?:[.,]\d{1,2})?)", all_text)
 
     if not matches:
         return None
@@ -92,7 +91,7 @@ def _extract_best_price_from_texts(texts: list[str]) -> float | None:
 
     for m in matches:
         try:
-            prices.append(float(m))
+            prices.append(float(m.replace(",", ".")))
         except ValueError:
             continue
 
@@ -130,6 +129,7 @@ def _save_debug(page, safe_label: str, url: str, response_status: str, candidate
 
 
 def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
+
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
     results: list[dict] = []
@@ -171,6 +171,7 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
                 )
 
                 try:
+
                     print(f"[INFO] Opening {url}")
 
                     response = page.goto(url, wait_until="networkidle", timeout=90000)
@@ -188,7 +189,7 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
                             pass
                         page.wait_for_timeout(2000)
 
-                    candidate_texts = _collect_candidate_texts(page, origin)
+                    candidate_texts = _collect_candidate_texts(page)
 
                     _save_debug(
                         page=page,
