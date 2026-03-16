@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import List, Tuple
-from datetime import date
+from datetime import date, datetime
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -54,56 +54,127 @@ def _maybe_handle_google_interstitials(page) -> None:
     )
 
 
-def _collect_candidate_texts(page) -> list[str]:
-    """
-    Extract the entire visible page text.
-    This is more stable than relying on DOM selectors.
-    """
-
-    texts: list[str] = []
-
+def _collect_page_text(page) -> str:
     try:
-        body_text = page.inner_text("body")
-        if body_text:
-            texts.append(body_text)
+        return page.inner_text("body")
     except Exception:
-        pass
-
-    return texts
+        return ""
 
 
-def _extract_best_price_from_texts(texts: list[str]) -> float | None:
-    """
-    Extract € prices from page text and return lowest realistic value.
-    """
-
-    if not texts:
-        return None
-
-    all_text = "\n".join(texts)
-
-    matches = re.findall(r"[€]\s?(\d{2,4}(?:[.,]\d{1,2})?)", all_text)
-
-    if not matches:
-        return None
-
-    prices: list[float] = []
-
-    for m in matches:
+def _parse_time_to_24h(value: str) -> datetime.time | None:
+    value = value.strip().upper().replace("\u202f", " ").replace("\xa0", " ")
+    for fmt in ("%I:%M %p", "%H:%M"):
         try:
-            prices.append(float(m.replace(",", ".")))
+            return datetime.strptime(value, fmt).time()
+        except ValueError:
+            pass
+    return None
+
+
+def _departure_ok(value: str, min_time: str = "16:00") -> bool:
+    dep = _parse_time_to_24h(value)
+    if dep is None:
+        return False
+    threshold = datetime.strptime(min_time, "%H:%M").time()
+    return dep >= threshold
+
+
+def _normalize_text(text: str) -> str:
+    return (
+        text.replace("\u202f", " ")
+        .replace("\xa0", " ")
+        .replace("–", "-")
+        .replace("—", "-")
+    )
+
+
+def _extract_flight_blocks(page_text: str) -> list[dict]:
+    text = _normalize_text(page_text)
+
+    pattern = re.compile(
+        r"(?P<dep>\d{1,2}:\d{2}\s?(?:AM|PM))\s*-\s*"
+        r"(?P<arr>\d{1,2}:\d{2}\s?(?:AM|PM)(?:\+1)?)\s*"
+        r"(?P<airline>VuelingIberia|Transavia|KLM|British Airways|SWISS)\s*"
+        r"(?P<duration>\d+\s*hr\s*\d+\s*min)\s*"
+        r"AMS-BCN\s*"
+        r"(?P<stops>Nonstop|1 stop)\s*"
+        r".*?"
+        r"€(?P<price>\d{2,4}(?:[.,]\d{1,2})?)\s*"
+        r"round trip",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+
+    rows: list[dict] = []
+
+    for match in pattern.finditer(text):
+        airline_raw = match.group("airline").strip()
+        airline = "Vueling" if "vueling" in airline_raw.lower() else airline_raw
+
+        price_raw = match.group("price").replace(",", ".")
+        try:
+            price = float(price_raw)
         except ValueError:
             continue
 
-    prices = [p for p in prices if 30 <= p <= 2000]
+        rows.append(
+            {
+                "airline": airline,
+                "outbound_departure": match.group("dep").strip(),
+                "outbound_arrival": match.group("arr").strip(),
+                "stops": match.group("stops").strip(),
+                "price": price,
+                "raw_block": match.group(0),
+            }
+        )
 
-    if not prices:
-        return None
+    deduped: list[dict] = []
+    seen: set[tuple] = set()
 
-    return min(prices)
+    for row in rows:
+        key = (
+            row["airline"],
+            row["outbound_departure"],
+            row["outbound_arrival"],
+            row["stops"],
+            row["price"],
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(row)
+
+    return deduped
 
 
-def _save_debug(page, safe_label: str, url: str, response_status: str, candidate_texts: list[str]) -> None:
+def _filter_relevant_flights(rows: list[dict]) -> list[dict]:
+    allowed_airlines = {"vueling", "transavia"}
+
+    filtered: list[dict] = []
+
+    for row in rows:
+        if row["airline"].lower() not in allowed_airlines:
+            continue
+        if row["stops"].lower() != "nonstop":
+            continue
+        if not _departure_ok(row["outbound_departure"], "16:00"):
+            continue
+        if not (30 <= row["price"] <= 2000):
+            continue
+        filtered.append(row)
+
+    filtered.sort(key=lambda r: (r["price"], r["outbound_departure"]))
+    return filtered
+
+
+def _save_debug(
+    page,
+    safe_label: str,
+    url: str,
+    response_status: str,
+    page_text: str,
+    parsed_rows: list[dict],
+    filtered_rows: list[dict],
+) -> None:
     final_url = page.url
     page_title = page.title()
 
@@ -120,22 +191,40 @@ def _save_debug(page, safe_label: str, url: str, response_status: str, candidate
         f"TITLE: {page_title}",
         f"HTTP_STATUS: {response_status}",
         "",
-        "=== PAGE TEXT ===",
+        "=== PARSED ROWS ===",
     ]
 
-    log_lines.extend(candidate_texts[:5])
+    if parsed_rows:
+        for row in parsed_rows:
+            log_lines.append(
+                f"{row['airline']} | {row['outbound_departure']} - {row['outbound_arrival']} | "
+                f"{row['stops']} | €{row['price']}"
+            )
+    else:
+        log_lines.append("<none>")
+
+    log_lines.extend(["", "=== FILTERED ROWS ==="])
+
+    if filtered_rows:
+        for row in filtered_rows:
+            log_lines.append(
+                f"{row['airline']} | {row['outbound_departure']} - {row['outbound_arrival']} | "
+                f"{row['stops']} | €{row['price']}"
+            )
+    else:
+        log_lines.append("<none>")
+
+    log_lines.extend(["", "=== PAGE TEXT ===", page_text[:20000]])
 
     txt_path.write_text("\n".join(log_lines), encoding="utf-8")
 
 
 def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
-
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
     results: list[dict] = []
 
     with sync_playwright() as p:
-
         browser = p.chromium.launch(
             headless=True,
             args=[
@@ -158,9 +247,7 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
         page = context.new_page()
 
         for origin in ["AMS", "RTM"]:
-
             for outbound, inbound in pairs:
-
                 label = f"{origin}_{outbound.isoformat()}_{inbound.isoformat()}"
                 safe_label = _safe_name(label)
 
@@ -171,15 +258,12 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
                 )
 
                 try:
-
                     print(f"[INFO] Opening {url}")
 
                     response = page.goto(url, wait_until="networkidle", timeout=90000)
 
                     page.wait_for_timeout(10000)
-
                     _maybe_handle_google_interstitials(page)
-
                     page.wait_for_timeout(3000)
 
                     for _ in range(3):
@@ -189,38 +273,53 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
                             pass
                         page.wait_for_timeout(2000)
 
-                    candidate_texts = _collect_candidate_texts(page)
+                    page_text = _collect_page_text(page)
+                    parsed_rows = _extract_flight_blocks(page_text)
+                    filtered_rows = _filter_relevant_flights(parsed_rows)
 
                     _save_debug(
                         page=page,
                         safe_label=safe_label,
                         url=url,
                         response_status=str(response.status if response else "unknown"),
-                        candidate_texts=candidate_texts,
+                        page_text=page_text,
+                        parsed_rows=parsed_rows,
+                        filtered_rows=filtered_rows,
                     )
 
-                    best_price = _extract_best_price_from_texts(candidate_texts)
-
-                    if best_price is None:
-                        print(f"[WARN] No valid price found for {label}")
+                    if not filtered_rows:
+                        print(f"[WARN] No valid filtered flights found for {label}")
                         continue
 
-                    print(f"[OK] {label}: best price {best_price}")
+                    top_rows = filtered_rows[:3]
 
-                    results.append(
-                        {
-                            "origin": origin,
-                            "destination": "BCN",
-                            "outbound": outbound,
-                            "inbound": inbound,
-                            "price": best_price,
-                            "source_url": page.url,
-                            "page_title": page.title(),
-                        }
-                    )
+                    for row in top_rows:
+                        print(
+                            f"[OK] {label}: {row['airline']} "
+                            f"{row['outbound_departure']}-{row['outbound_arrival']} €{row['price']}"
+                        )
+
+                        results.append(
+                            {
+                                "origin": origin,
+                                "destination": "BCN",
+                                "outbound": outbound,
+                                "inbound": inbound,
+                                "airline": row["airline"],
+                                "outbound_departure": row["outbound_departure"],
+                                "outbound_arrival": row["outbound_arrival"],
+                                "inbound_departure": "N/A",
+                                "inbound_arrival": "N/A",
+                                "outbound_flight_no": "N/A",
+                                "inbound_flight_no": "N/A",
+                                "price": row["price"],
+                                "source_url": page.url,
+                                "page_title": page.title(),
+                                "raw_text": row["raw_block"],
+                            }
+                        )
 
                 except PlaywrightTimeoutError as e:
-
                     err_path = DEBUG_DIR / f"{safe_label}_timeout.txt"
                     err_path.write_text(str(e), encoding="utf-8")
 
@@ -235,7 +334,6 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
                     print(f"[ERROR] Timeout in {label}: {e}")
 
                 except Exception as e:
-
                     err_path = DEBUG_DIR / f"{safe_label}_error.txt"
                     err_path.write_text(str(e), encoding="utf-8")
 
@@ -252,6 +350,14 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
         context.close()
         browser.close()
 
-    results.sort(key=lambda r: (r["outbound"], r["inbound"], r["price"]))
+    results.sort(
+        key=lambda r: (
+            r["origin"],
+            r["outbound"],
+            r["inbound"],
+            r["price"],
+            r["outbound_departure"],
+        )
+    )
 
     return results
