@@ -15,11 +15,11 @@ def _safe_name(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", text)
 
 
-def _build_google_flights_url(origin: str, outbound: str, inbound: str) -> str:
+def _build_google_flights_url(origin: str, destination: str, leg_date: str) -> str:
     return (
         "https://www.google.com/travel/flights/search"
         f"?hl=en&curr=EUR"
-        f"&q=Flights%20from%20{origin}%20to%20BCN%20{outbound}%20return%20{inbound}"
+        f"&q=Flights%20from%20{origin}%20to%20{destination}%20on%20{leg_date}%20one%20way"
     )
 
 
@@ -61,24 +61,6 @@ def _collect_page_text(page) -> str:
         return ""
 
 
-def _parse_time_to_24h(value: str) -> datetime.time | None:
-    value = value.strip().upper().replace("\u202f", " ").replace("\xa0", " ")
-    for fmt in ("%I:%M %p", "%H:%M"):
-        try:
-            return datetime.strptime(value, fmt).time()
-        except ValueError:
-            pass
-    return None
-
-
-def _departure_ok(value: str, min_time: str = "16:00") -> bool:
-    dep = _parse_time_to_24h(value)
-    if dep is None:
-        return False
-    threshold = datetime.strptime(min_time, "%H:%M").time()
-    return dep >= threshold
-
-
 def _normalize_text(text: str) -> str:
     return (
         text.replace("\u202f", " ")
@@ -88,19 +70,42 @@ def _normalize_text(text: str) -> str:
     )
 
 
-def _extract_flight_blocks(page_text: str) -> list[dict]:
+def _parse_time_to_24h(value: str) -> datetime.time | None:
+    value = value.strip().upper().replace("\u202f", " ").replace("\xa0", " ")
+    value = value.replace("+1", "").strip()
+
+    for fmt in ("%I:%M %p", "%H:%M"):
+        try:
+            return datetime.strptime(value, fmt).time()
+        except ValueError:
+            pass
+
+    return None
+
+
+def _departure_ok(value: str, min_time: str = "16:00") -> bool:
+    dep = _parse_time_to_24h(value)
+    if dep is None:
+        return False
+
+    threshold = datetime.strptime(min_time, "%H:%M").time()
+    return dep >= threshold
+
+
+def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> list[dict]:
     text = _normalize_text(page_text)
 
+    route_pattern = rf"{re.escape(origin)}-{re.escape(destination)}"
+
     pattern = re.compile(
-        r"(?P<dep>\d{1,2}:\d{2}\s?(?:AM|PM))\s*-\s*"
-        r"(?P<arr>\d{1,2}:\d{2}\s?(?:AM|PM)(?:\+1)?)\s*"
-        r"(?P<airline>VuelingIberia|Transavia|KLM|British Airways|SWISS)\s*"
-        r"(?P<duration>\d+\s*hr\s*\d+\s*min)\s*"
-        r"AMS-BCN\s*"
-        r"(?P<stops>Nonstop|1 stop)\s*"
-        r".*?"
-        r"€(?P<price>\d{2,4}(?:[.,]\d{1,2})?)\s*"
-        r"round trip",
+        rf"(?P<dep>\d{{1,2}}:\d{{2}}\s?(?:AM|PM))\s*-\s*"
+        rf"(?P<arr>\d{{1,2}}:\d{{2}}\s?(?:AM|PM)(?:\+1)?)\s*"
+        rf"(?P<airline>VuelingIberia|Transavia|KLM|British Airways|SWISS)\s*"
+        rf"(?P<duration>\d+\s*hr\s*\d+\s*min)\s*"
+        rf"{route_pattern}\s*"
+        rf"(?P<stops>Nonstop|1 stop)\s*"
+        rf".*?"
+        rf"€(?P<price>\d{{2,4}}(?:[.,]\d{{1,2}})?)",
         flags=re.IGNORECASE | re.DOTALL,
     )
 
@@ -108,19 +113,24 @@ def _extract_flight_blocks(page_text: str) -> list[dict]:
 
     for match in pattern.finditer(text):
         airline_raw = match.group("airline").strip()
-        airline = "Vueling" if "vueling" in airline_raw.lower() else airline_raw
 
-        price_raw = match.group("price").replace(",", ".")
+        if "vueling" in airline_raw.lower():
+            airline = "Vueling"
+        elif "transavia" in airline_raw.lower():
+            airline = "Transavia"
+        else:
+            airline = airline_raw
+
         try:
-            price = float(price_raw)
+            price = float(match.group("price").replace(",", "."))
         except ValueError:
             continue
 
         rows.append(
             {
                 "airline": airline,
-                "outbound_departure": match.group("dep").strip(),
-                "outbound_arrival": match.group("arr").strip(),
+                "departure_time": match.group("dep").strip(),
+                "arrival_time": match.group("arr").strip(),
                 "stops": match.group("stops").strip(),
                 "price": price,
                 "raw_block": match.group(0),
@@ -133,8 +143,8 @@ def _extract_flight_blocks(page_text: str) -> list[dict]:
     for row in rows:
         key = (
             row["airline"],
-            row["outbound_departure"],
-            row["outbound_arrival"],
+            row["departure_time"],
+            row["arrival_time"],
             row["stops"],
             row["price"],
         )
@@ -156,13 +166,13 @@ def _filter_relevant_flights(rows: list[dict]) -> list[dict]:
             continue
         if row["stops"].lower() != "nonstop":
             continue
-        if not _departure_ok(row["outbound_departure"], "16:00"):
+        if not _departure_ok(row["departure_time"], "16:00"):
             continue
         if not (30 <= row["price"] <= 2000):
             continue
         filtered.append(row)
 
-    filtered.sort(key=lambda r: (r["price"], r["outbound_departure"]))
+    filtered.sort(key=lambda r: (r["price"], r["departure_time"]))
     return filtered
 
 
@@ -197,7 +207,7 @@ def _save_debug(
     if parsed_rows:
         for row in parsed_rows:
             log_lines.append(
-                f"{row['airline']} | {row['outbound_departure']} - {row['outbound_arrival']} | "
+                f"{row['airline']} | {row['departure_time']} - {row['arrival_time']} | "
                 f"{row['stops']} | €{row['price']}"
             )
     else:
@@ -208,7 +218,7 @@ def _save_debug(
     if filtered_rows:
         for row in filtered_rows:
             log_lines.append(
-                f"{row['airline']} | {row['outbound_departure']} - {row['outbound_arrival']} | "
+                f"{row['airline']} | {row['departure_time']} - {row['arrival_time']} | "
                 f"{row['stops']} | €{row['price']}"
             )
     else:
@@ -217,6 +227,80 @@ def _save_debug(
     log_lines.extend(["", "=== PAGE TEXT ===", page_text[:20000]])
 
     txt_path.write_text("\n".join(log_lines), encoding="utf-8")
+
+
+def _run_one_leg_search(
+    page,
+    origin: str,
+    destination: str,
+    leg_date: date,
+    weekend_outbound: date,
+    weekend_inbound: date,
+) -> list[dict]:
+    label = f"{origin}_{destination}_{leg_date.isoformat()}_{weekend_outbound.isoformat()}_{weekend_inbound.isoformat()}"
+    safe_label = _safe_name(label)
+
+    url = _build_google_flights_url(
+        origin=origin,
+        destination=destination,
+        leg_date=leg_date.isoformat(),
+    )
+
+    print(f"[INFO] Opening {url}")
+
+    response = page.goto(url, wait_until="networkidle", timeout=90000)
+
+    page.wait_for_timeout(10000)
+    _maybe_handle_google_interstitials(page)
+    page.wait_for_timeout(3000)
+
+    for _ in range(3):
+        try:
+            page.mouse.wheel(0, 3000)
+        except Exception:
+            pass
+        page.wait_for_timeout(2000)
+
+    page_text = _collect_page_text(page)
+    parsed_rows = _extract_flight_blocks(page_text, origin=origin, destination=destination)
+    filtered_rows = _filter_relevant_flights(parsed_rows)
+
+    _save_debug(
+        page=page,
+        safe_label=safe_label,
+        url=url,
+        response_status=str(response.status if response else "unknown"),
+        page_text=page_text,
+        parsed_rows=parsed_rows,
+        filtered_rows=filtered_rows,
+    )
+
+    results: list[dict] = []
+
+    for row in filtered_rows[:3]:
+        results.append(
+            {
+                "origin": origin,
+                "destination": destination,
+                "outbound": weekend_outbound,
+                "inbound": weekend_inbound,
+                "leg_date": leg_date,
+                "leg_type": "outbound" if destination == "BCN" else "inbound",
+                "airline": row["airline"],
+                "outbound_departure": row["departure_time"],
+                "outbound_arrival": row["arrival_time"],
+                "inbound_departure": "N/A",
+                "inbound_arrival": "N/A",
+                "outbound_flight_no": "N/A",
+                "inbound_flight_no": "N/A",
+                "price": row["price"],
+                "source_url": page.url,
+                "page_title": page.title(),
+                "raw_text": row["raw_block"],
+            }
+        )
+
+    return results
 
 
 def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
@@ -246,115 +330,48 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
 
         page = context.new_page()
 
-        for origin in ["AMS", "RTM"]:
-            for outbound, inbound in pairs:
-                label = f"{origin}_{outbound.isoformat()}_{inbound.isoformat()}"
-                safe_label = _safe_name(label)
-
-                url = _build_google_flights_url(
-                    origin=origin,
-                    outbound=outbound.isoformat(),
-                    inbound=inbound.isoformat(),
-                )
+        for weekend_outbound, weekend_inbound in pairs:
+            for airport in ["AMS", "RTM"]:
+                try:
+                    outbound_rows = _run_one_leg_search(
+                        page=page,
+                        origin=airport,
+                        destination="BCN",
+                        leg_date=weekend_outbound,
+                        weekend_outbound=weekend_outbound,
+                        weekend_inbound=weekend_inbound,
+                    )
+                    results.extend(outbound_rows)
+                except PlaywrightTimeoutError as e:
+                    print(f"[ERROR] Timeout outbound {airport}->{ 'BCN' } {weekend_outbound}: {e}")
+                except Exception as e:
+                    print(f"[ERROR] Outbound {airport}->{ 'BCN' } {weekend_outbound}: {e}")
 
                 try:
-                    print(f"[INFO] Opening {url}")
-
-                    response = page.goto(url, wait_until="networkidle", timeout=90000)
-
-                    page.wait_for_timeout(10000)
-                    _maybe_handle_google_interstitials(page)
-                    page.wait_for_timeout(3000)
-
-                    for _ in range(3):
-                        try:
-                            page.mouse.wheel(0, 3000)
-                        except Exception:
-                            pass
-                        page.wait_for_timeout(2000)
-
-                    page_text = _collect_page_text(page)
-                    parsed_rows = _extract_flight_blocks(page_text)
-                    filtered_rows = _filter_relevant_flights(parsed_rows)
-
-                    _save_debug(
+                    inbound_rows = _run_one_leg_search(
                         page=page,
-                        safe_label=safe_label,
-                        url=url,
-                        response_status=str(response.status if response else "unknown"),
-                        page_text=page_text,
-                        parsed_rows=parsed_rows,
-                        filtered_rows=filtered_rows,
+                        origin="BCN",
+                        destination=airport,
+                        leg_date=weekend_inbound,
+                        weekend_outbound=weekend_outbound,
+                        weekend_inbound=weekend_inbound,
                     )
-
-                    if not filtered_rows:
-                        print(f"[WARN] No valid filtered flights found for {label}")
-                        continue
-
-                    top_rows = filtered_rows[:3]
-
-                    for row in top_rows:
-                        print(
-                            f"[OK] {label}: {row['airline']} "
-                            f"{row['outbound_departure']}-{row['outbound_arrival']} €{row['price']}"
-                        )
-
-                        results.append(
-                            {
-                                "origin": origin,
-                                "destination": "BCN",
-                                "outbound": outbound,
-                                "inbound": inbound,
-                                "airline": row["airline"],
-                                "outbound_departure": row["outbound_departure"],
-                                "outbound_arrival": row["outbound_arrival"],
-                                "inbound_departure": "N/A",
-                                "inbound_arrival": "N/A",
-                                "outbound_flight_no": "N/A",
-                                "inbound_flight_no": "N/A",
-                                "price": row["price"],
-                                "source_url": page.url,
-                                "page_title": page.title(),
-                                "raw_text": row["raw_block"],
-                            }
-                        )
-
+                    results.extend(inbound_rows)
                 except PlaywrightTimeoutError as e:
-                    err_path = DEBUG_DIR / f"{safe_label}_timeout.txt"
-                    err_path.write_text(str(e), encoding="utf-8")
-
-                    try:
-                        page.screenshot(
-                            path=str(DEBUG_DIR / f"{safe_label}_timeout.png"),
-                            full_page=True,
-                        )
-                    except Exception:
-                        pass
-
-                    print(f"[ERROR] Timeout in {label}: {e}")
-
+                    print(f"[ERROR] Timeout inbound BCN->{airport} {weekend_inbound}: {e}")
                 except Exception as e:
-                    err_path = DEBUG_DIR / f"{safe_label}_error.txt"
-                    err_path.write_text(str(e), encoding="utf-8")
-
-                    try:
-                        page.screenshot(
-                            path=str(DEBUG_DIR / f"{safe_label}_error.png"),
-                            full_page=True,
-                        )
-                    except Exception:
-                        pass
-
-                    print(f"[ERROR] {label}: {e}")
+                    print(f"[ERROR] Inbound BCN->{airport} {weekend_inbound}: {e}")
 
         context.close()
         browser.close()
 
     results.sort(
         key=lambda r: (
-            r["origin"],
             r["outbound"],
             r["inbound"],
+            r["leg_type"],
+            r["origin"],
+            r["destination"],
             r["price"],
             r["outbound_departure"],
         )
