@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from datetime import datetime
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
@@ -14,7 +13,15 @@ def _safe_name(text: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_.-]+", "_", text)
 
 
-def _click_if_present(page, selectors: list[str], timeout: int = 2000) -> bool:
+def _build_google_flights_url(origin: str, outbound: str, inbound: str) -> str:
+    return (
+        "https://www.google.com/travel/flights/search"
+        f"?hl=en&curr=EUR"
+        f"&q=Flights%20from%20{origin}%20to%20BCN%20{outbound}%20return%20{inbound}"
+    )
+
+
+def _click_if_present(page, selectors: list[str], timeout: int = 2500) -> bool:
     for selector in selectors:
         try:
             locator = page.locator(selector).first
@@ -30,24 +37,18 @@ def _maybe_handle_google_interstitials(page) -> None:
     _click_if_present(
         page,
         [
-            "text='Proceed anyway'",
-            "text='Continue anyway'",
-            "button:has-text('Proceed anyway')",
-            "button:has-text('Continue anyway')",
             "button:has-text('Accept all')",
             "button:has-text('I agree')",
             "button:has-text('Aceptar todo')",
             "button:has-text('Acepto')",
+            "button:has-text('Reject all')",
+            "button:has-text('No thanks')",
+            "button:has-text('Ahora no')",
+            "button:has-text('Not now')",
+            "text='Proceed anyway'",
+            "text='Continue anyway'",
         ],
         timeout=3000,
-    )
-
-
-def _build_google_flights_url(origin: str, outbound: str, inbound: str) -> str:
-    return (
-        "https://www.google.com/travel/flights"
-        f"?hl=en&curr=EUR#flt={origin}.BCN.{outbound}*BCN.{origin}.{inbound};"
-        "c:EUR;e:1;sd:1;t:f;tt:r"
     )
 
 
@@ -72,14 +73,61 @@ def _extract_price_candidates(text: str) -> list[float]:
     return prices
 
 
-def _collect_candidate_texts(page) -> list[str]:
+def _contains_route(text: str, origin: str) -> bool:
+    t = text.lower()
+    return (
+        origin.lower() in t
+        and "bcn" in t
+    ) or (
+        origin.lower() in t
+        and "barcelona" in t
+    )
+
+
+def _is_relevant_block(text: str, origin: str) -> bool:
+    t = text.lower()
+
+    bad_signals = [
+        "find cheap flights from united states to anywhere",
+        "popular flight destinations from united states",
+        "search more flights",
+        "chicago",
+        "dallas",
+        "atlanta",
+        "new york",
+        "los angeles",
+        "las vegas",
+        "orlando",
+        "explore destinations",
+    ]
+    if any(signal in t for signal in bad_signals):
+        return False
+
+    good_signals = [
+        origin.lower(),
+        "barcelona",
+        "bcn",
+        "round trip",
+        "sort by",
+        "price graph",
+        "departure",
+        "return",
+        "stops",
+        "nonstop",
+        "google flights",
+    ]
+
+    return any(signal in t for signal in good_signals)
+
+
+def _collect_candidate_texts(page, origin: str) -> list[str]:
     selectors = [
         "[role='main']",
+        "main",
         "body",
-        "[jscontroller]",
-        "[role='dialog']",
         "[role='listitem']",
         "li",
+        "div",
     ]
 
     texts: list[str] = []
@@ -88,13 +136,17 @@ def _collect_candidate_texts(page) -> list[str]:
     for selector in selectors:
         try:
             locator = page.locator(selector)
-            count = min(locator.count(), 80)
+            count = min(locator.count(), 250)
             for i in range(count):
                 try:
-                    t = locator.nth(i).inner_text(timeout=1000).strip()
+                    t = locator.nth(i).inner_text(timeout=800).strip()
                     if not t:
                         continue
+                    if len(t) < 20:
+                        continue
                     if t in seen:
+                        continue
+                    if not _is_relevant_block(t, origin):
                         continue
                     seen.add(t)
                     texts.append(t)
@@ -112,14 +164,35 @@ def _extract_best_price_from_texts(texts: list[str]) -> float | None:
     for text in texts:
         all_prices.extend(_extract_price_candidates(text))
 
-    if not all_prices:
-        return None
-
     valid_prices = [p for p in all_prices if 20 <= p <= 2000]
     if not valid_prices:
         return None
 
     return min(valid_prices)
+
+
+def _save_debug(page, safe_label: str, url: str, response_status: str, candidate_texts: list[str]) -> None:
+    final_url = page.url
+    page_title = page.title()
+
+    screenshot_path = DEBUG_DIR / f"{safe_label}.png"
+    html_path = DEBUG_DIR / f"{safe_label}.html"
+    txt_path = DEBUG_DIR / f"{safe_label}.txt"
+
+    page.screenshot(path=str(screenshot_path), full_page=True)
+    html_path.write_text(page.content(), encoding="utf-8")
+
+    log_lines = [
+        f"REQUEST_URL: {url}",
+        f"FINAL_URL: {final_url}",
+        f"TITLE: {page_title}",
+        f"HTTP_STATUS: {response_status}",
+        "",
+        "=== CANDIDATE TEXT BLOCKS ===",
+    ]
+    log_lines.extend(candidate_texts[:100])
+
+    txt_path.write_text("\n".join(log_lines), encoding="utf-8")
 
 
 def search_google_flights(pairs) -> list[dict]:
@@ -162,43 +235,30 @@ def search_google_flights(pairs) -> list[dict]:
 
                 try:
                     print(f"[INFO] Opening {url}")
-                    response = page.goto(url, wait_until="domcontentloaded", timeout=90000)
+                    response = page.goto(url, wait_until="networkidle", timeout=90000)
 
-                    page.wait_for_timeout(8000)
+                    page.wait_for_timeout(12000)
                     _maybe_handle_google_interstitials(page)
+                    page.wait_for_timeout(3000)
 
-                    try:
-                        page.mouse.wheel(0, 3000)
-                    except Exception:
-                        pass
+                    for _ in range(3):
+                        try:
+                            page.mouse.wheel(0, 2500)
+                        except Exception:
+                            pass
+                        page.wait_for_timeout(2500)
 
-                    page.wait_for_timeout(4000)
+                    candidate_texts = _collect_candidate_texts(page, origin=origin)
 
-                    final_url = page.url
-                    page_title = page.title()
+                    _save_debug(
+                        page=page,
+                        safe_label=safe_label,
+                        url=url,
+                        response_status=str(response.status if response else "unknown"),
+                        candidate_texts=candidate_texts,
+                    )
 
-                    screenshot_path = DEBUG_DIR / f"{safe_label}.png"
-                    html_path = DEBUG_DIR / f"{safe_label}.html"
-                    txt_path = DEBUG_DIR / f"{safe_label}.txt"
-
-                    page.screenshot(path=str(screenshot_path), full_page=True)
-                    html = page.content()
-                    html_path.write_text(html, encoding="utf-8")
-
-                    candidate_texts = _collect_candidate_texts(page)
                     best_price = _extract_best_price_from_texts(candidate_texts)
-
-                    log_lines = [
-                        f"REQUEST_URL: {url}",
-                        f"FINAL_URL: {final_url}",
-                        f"TITLE: {page_title}",
-                        f"HTTP_STATUS: {response.status if response else 'unknown'}",
-                        "",
-                        "=== CANDIDATE TEXT BLOCKS ===",
-                    ]
-                    log_lines.extend(candidate_texts[:60])
-
-                    txt_path.write_text("\n".join(log_lines), encoding="utf-8")
 
                     if best_price is None:
                         print(f"[WARN] No valid price found for {label}")
@@ -220,8 +280,8 @@ def search_google_flights(pairs) -> list[dict]:
                             "outbound_flight_no": "N/A",
                             "inbound_flight_no": "N/A",
                             "price": best_price,
-                            "source_url": final_url,
-                            "page_title": page_title,
+                            "source_url": page.url,
+                            "page_title": page.title(),
                             "raw_text": "\n\n".join(candidate_texts[:20]),
                         }
                     )
