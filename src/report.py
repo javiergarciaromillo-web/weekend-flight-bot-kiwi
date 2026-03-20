@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
+from src.store import get_weekend_history
+
 
 WEEKDAY_LABELS = {
     0: "Mon",
@@ -19,11 +21,18 @@ def _day_label(d: date) -> str:
     return f"{WEEKDAY_LABELS[d.weekday()]} {d.isoformat()}"
 
 
-def _price_delta(current: float, previous: float | None) -> str:
+def _fmt_price(value: float | None) -> str:
+    return "—" if value is None else f"{value:.2f} €"
+
+
+def _price_delta(current: float | None, previous: float | None) -> str:
+    if current is None:
+        return "—"
     if previous is None:
         return "new"
 
     diff = round(current - previous, 2)
+
     if diff == 0:
         return "0.00 €"
     if diff > 0:
@@ -31,11 +40,8 @@ def _price_delta(current: float, previous: float | None) -> str:
     return f"{diff:.2f} €"
 
 
-def _trend_label(current: float, historical_min: float | None) -> str:
-    if historical_min is None:
-        return "Too early to tell"
-
-    if historical_min <= 0:
+def _trend_label(current: float | None, historical_min: float | None) -> str:
+    if current is None or historical_min is None or historical_min <= 0:
         return "Too early to tell"
 
     ratio = current / historical_min
@@ -87,80 +93,81 @@ def _best_price(rows: list[dict]) -> float | None:
 
 
 def _best_combo_price(outbound_rows: list[dict], inbound_rows: list[dict]) -> float | None:
-    outbound_best = _best_price(outbound_rows)
-    inbound_best = _best_price(inbound_rows)
+    best_out = _best_price(outbound_rows)
+    best_in = _best_price(inbound_rows)
 
-    if outbound_best is None or inbound_best is None:
+    if best_out is None or best_in is None:
         return None
 
-    return outbound_best + inbound_best
+    return best_out + best_in
 
 
 def _find_previous_and_history(
-    all_rows: list[dict],
-    weekend_key: tuple[date, date],
+    weekend_outbound: date,
+    weekend_inbound: date,
 ) -> dict[str, float | None]:
-    """
-    Placeholder-compatible historical summary.
+    history = get_weekend_history(weekend_outbound, weekend_inbound)
 
-    With the current pipeline, we only have today's rows in the report layer.
-    This function is written so the email already supports history labels.
-    When historical retrieval is added, only this function will need upgrading.
-    """
+    if not history:
+        return {
+            "outbound_today": None,
+            "inbound_today": None,
+            "combo_today": None,
+            "outbound_prev": None,
+            "inbound_prev": None,
+            "combo_prev": None,
+            "outbound_hist_min": None,
+            "inbound_hist_min": None,
+            "combo_hist_min": None,
+            "history_rows": [],
+        }
 
-    weekend_rows = [
-        row for row in all_rows
-        if (row["outbound"], row["inbound"]) == weekend_key
-    ]
+    today_row = history[-1]
+    prev_row = history[-2] if len(history) >= 2 else None
 
-    outbound_rows = [r for r in weekend_rows if r.get("leg_type") == "outbound"]
-    inbound_rows = [r for r in weekend_rows if r.get("leg_type") == "inbound"]
-
-    outbound_best = _best_price(outbound_rows)
-    inbound_best = _best_price(inbound_rows)
-    combo_best = _best_combo_price(outbound_rows, inbound_rows)
+    outbound_hist_values = [r["best_outbound"] for r in history if r["best_outbound"] is not None]
+    inbound_hist_values = [r["best_inbound"] for r in history if r["best_inbound"] is not None]
+    combo_hist_values = [r["best_combo"] for r in history if r["best_combo"] is not None]
 
     return {
-        "outbound_today": outbound_best,
-        "inbound_today": inbound_best,
-        "combo_today": combo_best,
-        "outbound_prev": None,
-        "inbound_prev": None,
-        "combo_prev": None,
-        "outbound_hist_min": outbound_best,
-        "inbound_hist_min": inbound_best,
-        "combo_hist_min": combo_best,
+        "outbound_today": today_row["best_outbound"],
+        "inbound_today": today_row["best_inbound"],
+        "combo_today": today_row["best_combo"],
+        "outbound_prev": prev_row["best_outbound"] if prev_row else None,
+        "inbound_prev": prev_row["best_inbound"] if prev_row else None,
+        "combo_prev": prev_row["best_combo"] if prev_row else None,
+        "outbound_hist_min": min(outbound_hist_values) if outbound_hist_values else None,
+        "inbound_hist_min": min(inbound_hist_values) if inbound_hist_values else None,
+        "combo_hist_min": min(combo_hist_values) if combo_hist_values else None,
+        "history_rows": history[-7:],
     }
 
 
 def _build_route_table(rows: list[dict], route_title: str) -> str:
     if not rows:
         return f"""
-          <div style="padding:10px 0 14px 0;">
-            <div style="font-size:14px; color:#666;">{route_title}</div>
-            <div style="margin-top:6px; font-size:13px; color:#888;">No options found.</div>
+          <div style="padding:6px 0 10px 0;">
+            <div style="font-size:13px; color:#666; font-weight:700;">{route_title}</div>
+            <div style="margin-top:4px; font-size:12px; color:#999;">No options found.</div>
           </div>
         """
 
     html = f"""
-      <div style="padding:10px 0 14px 0;">
-        <div style="font-size:14px; font-weight:700; color:#222;">{route_title}</div>
+      <div style="padding:6px 0 10px 0;">
+        <div style="font-size:13px; font-weight:700; color:#222;">{route_title}</div>
     """
 
     for idx, item in enumerate(rows, start=1):
         html += f"""
-          <div style="margin-top:10px; padding:10px 12px; border:1px solid #e6e6e6; border-radius:8px; background:#fff;">
-            <div style="font-size:14px; font-weight:700;">
-              {idx}) {item.get('airline', 'Unknown')} — {item['price']:.2f} EUR
+          <div style="margin-top:8px; padding:8px 10px; border:1px solid #ececec; border-radius:6px; background:#fff;">
+            <div style="font-size:13px; font-weight:700; line-height:1.35;">
+              {idx}) {item.get('airline', 'Unknown')} — {item['price']:.2f} €
             </div>
-            <div style="margin-top:4px; font-size:13px; color:#333;">
-              DEP {item.get('outbound_departure', 'N/A')} | ARR {item.get('outbound_arrival', 'N/A')}
+            <div style="margin-top:3px; font-size:12px; color:#333;">
+              {item.get('outbound_departure', 'N/A')} → {item.get('outbound_arrival', 'N/A')}
             </div>
-            <div style="margin-top:4px; font-size:12px; color:#666;">
+            <div style="margin-top:3px; font-size:11px; color:#777;">
               Flight no: {item.get('outbound_flight_no', 'N/A')}
-            </div>
-            <div style="margin-top:6px; font-size:12px;">
-              <a href="{item.get('source_url', '#')}">Open result</a>
             </div>
           </div>
         """
@@ -175,14 +182,14 @@ def _build_leg_column(
     grouped_routes: dict[str, list[dict]],
 ) -> str:
     html = f"""
-      <td style="width:50%; vertical-align:top; padding:14px; border-left:1px solid #eee;">
-        <div style="font-size:18px; font-weight:700; color:#111;">{title}</div>
-        <div style="margin-top:4px; font-size:13px; color:#666;">{day_label}</div>
+      <td style="width:50%; vertical-align:top; padding:12px 14px; border-left:1px solid #eee;">
+        <div style="font-size:16px; font-weight:700; color:#111;">{title}</div>
+        <div style="margin-top:3px; font-size:12px; color:#666;">{day_label}</div>
     """
 
     if not grouped_routes:
         html += """
-        <div style="margin-top:14px; font-size:13px; color:#888;">No options found.</div>
+        <div style="margin-top:10px; font-size:12px; color:#999;">No options found.</div>
         """
     else:
         for route_key in sorted(grouped_routes.keys()):
@@ -193,56 +200,62 @@ def _build_leg_column(
 
 
 def _build_history_table(summary: dict[str, float | None]) -> str:
-    outbound_today = summary["outbound_today"]
-    inbound_today = summary["inbound_today"]
-    combo_today = summary["combo_today"]
+    history_rows = summary.get("history_rows", [])
 
-    outbound_prev = summary["outbound_prev"]
-    inbound_prev = summary["inbound_prev"]
-    combo_prev = summary["combo_prev"]
+    if not history_rows:
+        return """
+          <div style="padding:14px 18px; border-top:1px solid #ececec;">
+            <div style="font-size:14px; font-weight:700;">Trend summary</div>
+            <div style="margin-top:6px; font-size:12px; color:#888;">No historical data yet.</div>
+          </div>
+        """
 
-    outbound_hist_min = summary["outbound_hist_min"]
-    inbound_hist_min = summary["inbound_hist_min"]
-    combo_hist_min = summary["combo_hist_min"]
+    html = f"""
+      <div style="padding:14px 18px; border-top:1px solid #ececec;">
+        <div style="font-size:14px; font-weight:700;">Trend summary</div>
+        <div style="margin-top:8px; font-size:12px; color:#555;">
+          Outbound today: <strong>{_fmt_price(summary['outbound_today'])}</strong>
+          ({_price_delta(summary['outbound_today'], summary['outbound_prev'])})
+          &nbsp;&nbsp;|&nbsp;&nbsp;
+          Inbound today: <strong>{_fmt_price(summary['inbound_today'])}</strong>
+          ({_price_delta(summary['inbound_today'], summary['inbound_prev'])})
+          &nbsp;&nbsp;|&nbsp;&nbsp;
+          Combo today: <strong>{_fmt_price(summary['combo_today'])}</strong>
+          ({_price_delta(summary['combo_today'], summary['combo_prev'])})
+        </div>
 
-    def fmt(value: float | None) -> str:
-        return "—" if value is None else f"{value:.2f} €"
-
-    return f"""
-      <div style="padding:16px 20px; border-top:1px solid #ececec;">
-        <div style="font-size:16px; font-weight:700;">Trend summary</div>
-        <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:13px;">
+        <table style="width:100%; border-collapse:collapse; margin-top:10px; font-size:12px;">
           <thead>
             <tr>
-              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Metric</th>
-              <th style="text-align:right; padding:8px; border-bottom:1px solid #ddd;">Today</th>
-              <th style="text-align:right; padding:8px; border-bottom:1px solid #ddd;">vs prev</th>
-              <th style="text-align:right; padding:8px; border-bottom:1px solid #ddd;">Hist. min</th>
+              <th style="text-align:left; padding:6px; border-bottom:1px solid #ddd;">Date</th>
+              <th style="text-align:right; padding:6px; border-bottom:1px solid #ddd;">Outbound</th>
+              <th style="text-align:right; padding:6px; border-bottom:1px solid #ddd;">Inbound</th>
+              <th style="text-align:right; padding:6px; border-bottom:1px solid #ddd;">Combo</th>
             </tr>
           </thead>
           <tbody>
+    """
+
+    for row in history_rows:
+        html += f"""
             <tr>
-              <td style="padding:8px; border-bottom:1px solid #f0f0f0;">Best outbound</td>
-              <td style="padding:8px; text-align:right; border-bottom:1px solid #f0f0f0;">{fmt(outbound_today)}</td>
-              <td style="padding:8px; text-align:right; border-bottom:1px solid #f0f0f0;">{_price_delta(outbound_today, outbound_prev) if outbound_today is not None else '—'}</td>
-              <td style="padding:8px; text-align:right; border-bottom:1px solid #f0f0f0;">{fmt(outbound_hist_min)}</td>
+              <td style="padding:6px; border-bottom:1px solid #f1f1f1;">{row['run_date']}</td>
+              <td style="padding:6px; text-align:right; border-bottom:1px solid #f1f1f1;">{_fmt_price(row['best_outbound'])}</td>
+              <td style="padding:6px; text-align:right; border-bottom:1px solid #f1f1f1;">{_fmt_price(row['best_inbound'])}</td>
+              <td style="padding:6px; text-align:right; border-bottom:1px solid #f1f1f1;">{_fmt_price(row['best_combo'])}</td>
             </tr>
-            <tr>
-              <td style="padding:8px; border-bottom:1px solid #f0f0f0;">Best inbound</td>
-              <td style="padding:8px; text-align:right; border-bottom:1px solid #f0f0f0;">{fmt(inbound_today)}</td>
-              <td style="padding:8px; text-align:right; border-bottom:1px solid #f0f0f0;">{_price_delta(inbound_today, inbound_prev) if inbound_today is not None else '—'}</td>
-              <td style="padding:8px; text-align:right; border-bottom:1px solid #f0f0f0;">{fmt(inbound_hist_min)}</td>
-            </tr>
-            <tr>
-              <td style="padding:8px;">Best manual combo</td>
-              <td style="padding:8px; text-align:right;">{fmt(combo_today)}</td>
-              <td style="padding:8px; text-align:right;">{_price_delta(combo_today, combo_prev) if combo_today is not None else '—'}</td>
-              <td style="padding:8px; text-align:right;">{fmt(combo_hist_min)}</td>
-            </tr>
+        """
+
+    html += f"""
           </tbody>
         </table>
+        <div style="margin-top:8px; font-size:12px; color:#666;">
+          Historical min combo: <strong>{_fmt_price(summary['combo_hist_min'])}</strong>
+        </div>
       </div>
     """
+
+    return html
 
 
 def build_html_report(run_date, rows):
@@ -268,35 +281,32 @@ def build_html_report(run_date, rows):
 
     global_best_combo = min(combo_candidates) if combo_candidates else None
 
-    def fmt(value: float | None) -> str:
-        return "—" if value is None else f"{value:.2f} €"
-
     html = f"""
     <html>
-      <body style="font-family: Arial, sans-serif; background:#f5f6f7; color:#222; margin:0; padding:20px;">
-        <div style="max-width:1040px; margin:0 auto; background:#fff; border:1px solid #ddd;">
-          <div style="padding:16px 20px; border-bottom:1px solid #e5e5e5;">
+      <body style="font-family: Arial, sans-serif; background:#f5f6f7; color:#222; margin:0; padding:16px;">
+        <div style="max-width:980px; margin:0 auto; background:#fff; border:1px solid #ddd;">
+          <div style="padding:14px 18px; border-bottom:1px solid #e5e5e5;">
             <div style="font-size:12px; color:#666;">Weekend Flight Bot</div>
-            <div style="font-size:22px; font-weight:700; margin-top:4px;">Daily flight report</div>
-            <div style="font-size:13px; color:#666; margin-top:6px;">Run date: {run_date.isoformat()}</div>
+            <div style="font-size:21px; font-weight:700; margin-top:4px;">Daily flight report</div>
+            <div style="font-size:12px; color:#666; margin-top:4px;">Run date: {run_date.isoformat()}</div>
 
-            <table style="width:100%; border-collapse:collapse; margin-top:14px; font-size:13px;">
+            <table style="width:100%; border-collapse:collapse; margin-top:12px; font-size:12px;">
               <tr>
-                <td style="padding:10px; border:1px solid #eee; background:#fafafa;">
-                  <div style="color:#666;">Weekends analyzed</div>
-                  <div style="font-size:18px; font-weight:700;">{len(grouped)}</div>
+                <td style="padding:8px; border:1px solid #eee; background:#fafafa;">
+                  <div style="color:#666;">Weekends</div>
+                  <div style="font-size:17px; font-weight:700;">{len(grouped)}</div>
                 </td>
-                <td style="padding:10px; border:1px solid #eee; background:#fafafa;">
-                  <div style="color:#666;">Best outbound found</div>
-                  <div style="font-size:18px; font-weight:700;">{fmt(global_best_outbound)}</div>
+                <td style="padding:8px; border:1px solid #eee; background:#fafafa;">
+                  <div style="color:#666;">Best outbound</div>
+                  <div style="font-size:17px; font-weight:700;">{_fmt_price(global_best_outbound)}</div>
                 </td>
-                <td style="padding:10px; border:1px solid #eee; background:#fafafa;">
-                  <div style="color:#666;">Best inbound found</div>
-                  <div style="font-size:18px; font-weight:700;">{fmt(global_best_inbound)}</div>
+                <td style="padding:8px; border:1px solid #eee; background:#fafafa;">
+                  <div style="color:#666;">Best inbound</div>
+                  <div style="font-size:17px; font-weight:700;">{_fmt_price(global_best_inbound)}</div>
                 </td>
-                <td style="padding:10px; border:1px solid #eee; background:#fafafa;">
-                  <div style="color:#666;">Best manual combo</div>
-                  <div style="font-size:18px; font-weight:700;">{fmt(global_best_combo)}</div>
+                <td style="padding:8px; border:1px solid #eee; background:#fafafa;">
+                  <div style="color:#666;">Best combo</div>
+                  <div style="font-size:17px; font-weight:700;">{_fmt_price(global_best_combo)}</div>
                 </td>
               </tr>
             </table>
@@ -319,44 +329,31 @@ def build_html_report(run_date, rows):
         outbound_routes = weekend_data["outbound"]
         inbound_routes = weekend_data["inbound"]
 
-        weekend_rows = [
-            r for r in rows
-            if (r["outbound"], r["inbound"]) == weekend_key
-        ]
+        summary = _find_previous_and_history(weekend_outbound, weekend_inbound)
 
-        outbound_rows = [r for r in weekend_rows if r.get("leg_type") == "outbound"]
-        inbound_rows = [r for r in weekend_rows if r.get("leg_type") == "inbound"]
-
-        summary = _find_previous_and_history(rows, weekend_key)
-
-        buying_signal = _trend_label(
-            summary["combo_today"] if summary["combo_today"] is not None else 0,
-            summary["combo_hist_min"],
-        )
+        buying_signal = _trend_label(summary["combo_today"], summary["combo_hist_min"])
 
         html += f"""
-          <div style="border-top:2px solid #d8d8d8;">
-            <div style="padding:18px 20px; background:#fafafa;">
-              <div style="font-size:22px; font-weight:700;">
-                Weekend: {_day_label(weekend_outbound)} → {_day_label(weekend_inbound)}
+          <div style="margin:14px; border:1px solid #dcdcdc; border-radius:10px; overflow:hidden;">
+            <div style="padding:14px 16px; background:#fafafa; border-bottom:1px solid #ececec;">
+              <div style="font-size:18px; font-weight:700;">
+                {_day_label(weekend_outbound)} → {_day_label(weekend_inbound)}
               </div>
-              <div style="margin-top:8px; font-size:14px; color:#444;">
-                Best manual combo today: <strong>{fmt(summary['combo_today'])}</strong>
+              <div style="margin-top:6px; font-size:12px; color:#444;">
+                Combo today: <strong>{_fmt_price(summary['combo_today'])}</strong>
                 &nbsp;&nbsp;|&nbsp;&nbsp;
-                Historical min combo: <strong>{fmt(summary['combo_hist_min'])}</strong>
+                Hist. min: <strong>{_fmt_price(summary['combo_hist_min'])}</strong>
                 &nbsp;&nbsp;|&nbsp;&nbsp;
-                Buying signal: <strong>{buying_signal}</strong>
+                Signal: <strong>{buying_signal}</strong>
               </div>
             </div>
 
-            <div style="padding:0 20px 18px 20px;">
-              <table style="width:100%; border-collapse:collapse; table-layout:fixed; margin-top:16px; border:1px solid #eee;">
-                <tr>
-                  {_build_leg_column("Outbound options", _day_label(weekend_outbound), outbound_routes)}
-                  {_build_leg_column("Inbound options", _day_label(weekend_inbound), inbound_routes)}
-                </tr>
-              </table>
-            </div>
+            <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
+              <tr>
+                {_build_leg_column("Outbound", _day_label(weekend_outbound), outbound_routes)}
+                {_build_leg_column("Inbound", _day_label(weekend_inbound), inbound_routes)}
+              </tr>
+            </table>
 
             {_build_history_table(summary)}
           </div>
