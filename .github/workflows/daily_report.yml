@@ -18,6 +18,19 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Ensure data folders exist
+        run: |
+          mkdir -p data
+          mkdir -p debug
+
+      - name: Restore historical DB cache
+        uses: actions/cache/restore@v4
+        with:
+          path: data/prices.db
+          key: flight-db-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            flight-db-${{ github.ref_name }}-
+
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
@@ -31,6 +44,12 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           python -m src.main
+
+      - name: Save historical DB cache
+        uses: actions/cache/save@v4
+        with:
+          path: data/prices.db
+          key: flight-db-${{ github.ref_name }}-${{ github.run_id }}
 
       - name: Upload DB
         uses: actions/upload-artifact@v4
