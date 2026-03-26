@@ -12,7 +12,12 @@ from src.emailer import send_email_html
 def main() -> None:
     run_date = date.today()
 
-    pairs = generate_weekend_pairs(run_date, 5)
+    # 7 weeks horizon, skipping the first immediate week
+    pairs = generate_weekend_pairs(
+        start_date=run_date,
+        weeks=7,
+        skip_weeks=1,
+    )
 
     results = search_google_flights(pairs)
 
