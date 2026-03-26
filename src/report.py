@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import calendar
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 
 from src.store import get_weekend_history
 
@@ -14,6 +15,21 @@ WEEKDAY_LABELS = {
     4: "Fri",
     5: "Sat",
     6: "Sun",
+}
+
+MONTH_LABELS = {
+    1: "January",
+    2: "February",
+    3: "March",
+    4: "April",
+    5: "May",
+    6: "June",
+    7: "July",
+    8: "August",
+    9: "September",
+    10: "October",
+    11: "November",
+    12: "December",
 }
 
 
@@ -285,6 +301,158 @@ def _build_history_table(summary: dict) -> str:
     return html
 
 
+def _nato_holidays() -> set[date]:
+    holidays = {
+        date(2026, 4, 3),
+        date(2026, 4, 6),
+        date(2026, 4, 27),
+        date(2026, 5, 1),
+        date(2026, 5, 5),
+        date(2026, 5, 14),
+        date(2026, 5, 25),
+        date(2026, 11, 2),
+    }
+
+    current = date(2026, 12, 23)
+    end = date(2027, 1, 1)
+    while current <= end:
+        holidays.add(current)
+        current += timedelta(days=1)
+
+    return holidays
+
+
+def _months_in_scope(grouped: dict[tuple[date, date], dict]) -> list[tuple[int, int]]:
+    months = set()
+
+    for weekend_outbound, weekend_inbound in grouped.keys():
+        months.add((weekend_outbound.year, weekend_outbound.month))
+        months.add((weekend_inbound.year, weekend_inbound.month))
+
+    return sorted(months)
+
+
+def _day_style(day: date, outbound_days: set[date], inbound_days: set[date], holidays: set[date]) -> str:
+    is_out = day in outbound_days
+    is_in = day in inbound_days
+    is_holiday = day in holidays
+
+    bg = "#ffffff"
+    color = "#222"
+    border = "1px solid #eee"
+
+    if is_out and is_in and is_holiday:
+        bg = "#d8b4fe"
+        border = "1px solid #a855f7"
+    elif is_out and is_in:
+        bg = "#c7d2fe"
+        border = "1px solid #6366f1"
+    elif is_out and is_holiday:
+        bg = "#bfdbfe"
+        border = "1px solid #2563eb"
+    elif is_in and is_holiday:
+        bg = "#bbf7d0"
+        border = "1px solid #16a34a"
+    elif is_out:
+        bg = "#dbeafe"
+        border = "1px solid #60a5fa"
+    elif is_in:
+        bg = "#dcfce7"
+        border = "1px solid #4ade80"
+    elif is_holiday:
+        bg = "#fee2e2"
+        border = "1px solid #f87171"
+
+    return f"background:{bg}; color:{color}; border:{border};"
+
+
+def _build_month_calendar(
+    year: int,
+    month: int,
+    outbound_days: set[date],
+    inbound_days: set[date],
+    holidays: set[date],
+) -> str:
+    cal = calendar.Calendar(firstweekday=0)
+    weeks = cal.monthdatescalendar(year, month)
+
+    html = f"""
+      <div style="border:1px solid #ddd; border-radius:10px; overflow:hidden; background:#fff;">
+        <div style="padding:10px 12px; background:#fafafa; border-bottom:1px solid #ececec; font-size:15px; font-weight:700;">
+          {MONTH_LABELS[month]} {year}
+        </div>
+        <table style="width:100%; border-collapse:collapse; table-layout:fixed; font-size:11px;">
+          <thead>
+            <tr>
+              <th style="padding:6px; border-bottom:1px solid #eee; color:#666;">Mon</th>
+              <th style="padding:6px; border-bottom:1px solid #eee; color:#666;">Tue</th>
+              <th style="padding:6px; border-bottom:1px solid #eee; color:#666;">Wed</th>
+              <th style="padding:6px; border-bottom:1px solid #eee; color:#666;">Thu</th>
+              <th style="padding:6px; border-bottom:1px solid #eee; color:#666;">Fri</th>
+              <th style="padding:6px; border-bottom:1px solid #eee; color:#666;">Sat</th>
+              <th style="padding:6px; border-bottom:1px solid #eee; color:#666;">Sun</th>
+            </tr>
+          </thead>
+          <tbody>
+    """
+
+    for week in weeks:
+        html += "<tr>"
+        for day in week:
+            in_month = day.month == month
+            style = _day_style(day, outbound_days, inbound_days, holidays) if in_month else "background:#f8f8f8; color:#bbb; border:1px solid #f0f0f0;"
+            html += f"""
+              <td style="height:34px; text-align:center; vertical-align:middle; {style}">
+                {day.day if in_month else ""}
+              </td>
+            """
+        html += "</tr>"
+
+    html += """
+          </tbody>
+        </table>
+      </div>
+    """
+    return html
+
+
+def _build_calendar_section(grouped: dict[tuple[date, date], dict]) -> str:
+    outbound_days = {weekend_outbound for weekend_outbound, _ in grouped.keys()}
+    inbound_days = {weekend_inbound for _, weekend_inbound in grouped.keys()}
+    holidays = _nato_holidays()
+    months = _months_in_scope(grouped)
+
+    if not months:
+        return ""
+
+    html = """
+      <div style="padding:14px 16px; border-bottom:1px solid #e5e5e5;">
+        <div style="font-size:16px; font-weight:700;">Calendar view</div>
+        <div style="margin-top:8px; display:flex; gap:10px; flex-wrap:wrap; font-size:12px; color:#444;">
+          <div><span style="display:inline-block; width:12px; height:12px; background:#dbeafe; border:1px solid #60a5fa; vertical-align:middle;"></span> Outbound</div>
+          <div><span style="display:inline-block; width:12px; height:12px; background:#dcfce7; border:1px solid #4ade80; vertical-align:middle;"></span> Inbound</div>
+          <div><span style="display:inline-block; width:12px; height:12px; background:#fee2e2; border:1px solid #f87171; vertical-align:middle;"></span> NATO holiday</div>
+          <div><span style="display:inline-block; width:12px; height:12px; background:#d8b4fe; border:1px solid #a855f7; vertical-align:middle;"></span> Flight + holiday overlap</div>
+        </div>
+        <div style="margin-top:12px; display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px;">
+    """
+
+    for year, month in months:
+        html += _build_month_calendar(
+            year=year,
+            month=month,
+            outbound_days=outbound_days,
+            inbound_days=inbound_days,
+            holidays=holidays,
+        )
+
+    html += """
+        </div>
+      </div>
+    """
+    return html
+
+
 def build_html_report(run_date, rows):
     grouped = _group_rows(rows)
 
@@ -333,6 +501,8 @@ def build_html_report(run_date, rows):
               </div>
             </div>
           </div>
+
+          {_build_calendar_section(grouped)}
     """
 
     if not rows:
