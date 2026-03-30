@@ -83,59 +83,186 @@ def _parse_time_to_24h(value: str) -> datetime.time | None:
     return None
 
 
-def _departure_ok(value: str, min_time: str = "16:00") -> bool:
-    dep = _parse_time_to_24h(value)
+def _departure_ok(leg_date: date, departure_time: str) -> bool:
+    """
+    Rules:
+    - Thursday outbound -> from 16:00
+    - Friday outbound -> whole day
+    - Sunday inbound -> from 16:00
+    - Monday inbound -> whole day
+    """
+    weekday = leg_date.weekday()
+
+    if weekday in (4, 0):  # Friday or Monday
+        return True
+
+    dep = _parse_time_to_24h(departure_time)
     if dep is None:
         return False
 
-    threshold = datetime.strptime(min_time, "%H:%M").time()
+    threshold = datetime.strptime("16:00", "%H:%M").time()
     return dep >= threshold
 
 
-def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> list[dict]:
-    text = _normalize_text(page_text)
+def _canonical_airline_name(raw: str) -> str:
+    raw_lower = raw.lower()
 
-    route_pattern = rf"{re.escape(origin)}-{re.escape(destination)}"
+    if "vueling" in raw_lower:
+        return "Vueling"
+    if "transavia" in raw_lower:
+        return "Transavia"
+    if "klm" in raw_lower:
+        return "KLM"
+    if "british airways" in raw_lower:
+        return "British Airways"
+    if "swiss" in raw_lower:
+        return "SWISS"
 
-    pattern = re.compile(
-        rf"(?P<dep>\d{{1,2}}:\d{{2}}\s?(?:AM|PM))\s*-\s*"
-        rf"(?P<arr>\d{{1,2}}:\d{{2}}\s?(?:AM|PM)(?:\+1)?)\s*"
-        rf"(?P<airline>VuelingIberia|Transavia|KLM|British Airways|SWISS)\s*"
-        rf"(?P<duration>\d+\s*hr\s*\d+\s*min)\s*"
-        rf"{route_pattern}\s*"
-        rf"(?P<stops>Nonstop|1 stop)\s*"
-        rf".*?"
-        rf"€(?P<price>\d{{2,4}}(?:[.,]\d{{1,2}})?)",
-        flags=re.IGNORECASE | re.DOTALL,
+    return raw.strip()
+
+
+def _is_time_line(text: str) -> bool:
+    return re.fullmatch(r"\d{1,2}:\d{2}\s?(?:AM|PM)(?:\+1)?", text.strip(), flags=re.IGNORECASE) is not None
+
+
+def _is_airline_line(text: str) -> bool:
+    t = text.strip().lower()
+    return any(
+        x in t for x in [
+            "vueling",
+            "transavia",
+            "klm",
+            "british airways",
+            "swiss",
+        ]
     )
 
+
+def _is_duration_line(text: str) -> bool:
+    return re.fullmatch(r"\d+\s*hr\s*\d+\s*min", text.strip(), flags=re.IGNORECASE) is not None
+
+
+def _is_route_line(text: str, origin: str, destination: str) -> bool:
+    t = text.strip().upper().replace("–", "-").replace("—", "-")
+    return t == f"{origin}-{destination}"
+
+
+def _is_stops_line(text: str) -> bool:
+    t = text.strip().lower()
+    return t in {"nonstop", "1 stop"}
+
+
+def _extract_price_from_line(text: str) -> float | None:
+    m = re.search(r"€\s?(\d{2,4}(?:[.,]\d{1,2})?)", text)
+    if not m:
+        return None
+
+    try:
+        return float(m.group(1).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def _prepare_lines(page_text: str) -> list[str]:
+    text = _normalize_text(page_text)
+    lines = [line.strip() for line in text.splitlines()]
+    return [line for line in lines if line]
+
+
+def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> list[dict]:
+    """
+    Parse the Google Flights plain text sequentially.
+
+    Expected pattern in the text:
+      time
+      -
+      time
+      airline
+      duration
+      ORIGIN-DEST
+      Nonstop / 1 stop
+      ...
+      €price
+    """
+    lines = _prepare_lines(page_text)
     rows: list[dict] = []
 
-    for match in pattern.finditer(text):
-        airline_raw = match.group("airline").strip()
+    i = 0
+    while i < len(lines):
+        current = lines[i]
 
-        if "vueling" in airline_raw.lower():
-            airline = "Vueling"
-        elif "transavia" in airline_raw.lower():
-            airline = "Transavia"
-        else:
-            airline = airline_raw
-
-        try:
-            price = float(match.group("price").replace(",", "."))
-        except ValueError:
+        # Pattern starts with a departure time line
+        if not _is_time_line(current):
+            i += 1
             continue
 
-        rows.append(
-            {
-                "airline": airline,
-                "departure_time": match.group("dep").strip(),
-                "arrival_time": match.group("arr").strip(),
-                "stops": match.group("stops").strip(),
-                "price": price,
-                "raw_block": match.group(0),
-            }
-        )
+        dep_time = current.strip()
+
+        # Often the next non-empty line is "-"
+        j = i + 1
+        if j < len(lines) and lines[j] == "-":
+            j += 1
+
+        if j >= len(lines) or not _is_time_line(lines[j]):
+            i += 1
+            continue
+
+        arr_time = lines[j].strip()
+        j += 1
+
+        if j >= len(lines) or not _is_airline_line(lines[j]):
+            i += 1
+            continue
+
+        airline = _canonical_airline_name(lines[j])
+        j += 1
+
+        if j >= len(lines) or not _is_duration_line(lines[j]):
+            i += 1
+            continue
+
+        duration = lines[j].strip()
+        j += 1
+
+        # Search route and stops in the next few lines
+        route_found = False
+        stops_value = None
+        price_value = None
+
+        scan_limit = min(len(lines), j + 20)
+        raw_block_lines = [dep_time, "-", arr_time, airline, duration]
+
+        for k in range(j, scan_limit):
+            raw_block_lines.append(lines[k])
+
+            if not route_found and _is_route_line(lines[k], origin, destination):
+                route_found = True
+                continue
+
+            if route_found and stops_value is None and _is_stops_line(lines[k]):
+                stops_value = lines[k].strip()
+                continue
+
+            if route_found and price_value is None:
+                maybe_price = _extract_price_from_line(lines[k])
+                if maybe_price is not None:
+                    price_value = maybe_price
+                    break
+
+        if route_found and stops_value is not None and price_value is not None:
+            rows.append(
+                {
+                    "airline": airline,
+                    "departure_time": dep_time,
+                    "arrival_time": arr_time,
+                    "duration": duration,
+                    "stops": stops_value,
+                    "price": price_value,
+                    "raw_block": "\n".join(raw_block_lines),
+                }
+            )
+
+        i += 1
 
     deduped: list[dict] = []
     seen: set[tuple] = set()
@@ -156,7 +283,7 @@ def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> lis
     return deduped
 
 
-def _filter_relevant_flights(rows: list[dict]) -> list[dict]:
+def _filter_relevant_flights(rows: list[dict], leg_date: date) -> list[dict]:
     allowed_airlines = {"vueling", "transavia"}
 
     filtered: list[dict] = []
@@ -166,7 +293,7 @@ def _filter_relevant_flights(rows: list[dict]) -> list[dict]:
             continue
         if row["stops"].lower() != "nonstop":
             continue
-        if not _departure_ok(row["departure_time"], "16:00"):
+        if not _departure_ok(leg_date, row["departure_time"]):
             continue
         if not (30 <= row["price"] <= 2000):
             continue
@@ -224,7 +351,7 @@ def _save_debug(
     else:
         log_lines.append("<none>")
 
-    log_lines.extend(["", "=== PAGE TEXT ===", page_text[:20000]])
+    log_lines.extend(["", "=== PAGE TEXT ===", page_text[:30000]])
 
     txt_path.write_text("\n".join(log_lines), encoding="utf-8")
 
@@ -263,7 +390,7 @@ def _run_one_leg_search(
 
     page_text = _collect_page_text(page)
     parsed_rows = _extract_flight_blocks(page_text, origin=origin, destination=destination)
-    filtered_rows = _filter_relevant_flights(parsed_rows)
+    filtered_rows = _filter_relevant_flights(parsed_rows, leg_date=leg_date)
 
     _save_debug(
         page=page,
@@ -343,9 +470,9 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
                     )
                     results.extend(outbound_rows)
                 except PlaywrightTimeoutError as e:
-                    print(f"[ERROR] Timeout outbound {airport}->{ 'BCN' } {weekend_outbound}: {e}")
+                    print(f"[ERROR] Timeout outbound {airport}->BCN {weekend_outbound}: {e}")
                 except Exception as e:
-                    print(f"[ERROR] Outbound {airport}->{ 'BCN' } {weekend_outbound}: {e}")
+                    print(f"[ERROR] Outbound {airport}->BCN {weekend_outbound}: {e}")
 
                 try:
                     inbound_rows = _run_one_leg_search(
