@@ -139,7 +139,8 @@ def _is_airline_line(text: str) -> bool:
 
 
 def _is_duration_line(text: str) -> bool:
-    return re.fullmatch(r"\d+\s*hr\s*\d+\s*min", text.strip(), flags=re.IGNORECASE) is not None
+    t = text.strip().lower()
+    return re.fullmatch(r"\d+\s*hr(?:\s*\d+\s*min)?", t) is not None
 
 
 def _is_route_line(text: str, origin: str, destination: str) -> bool:
@@ -191,14 +192,12 @@ def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> lis
     while i < len(lines):
         current = lines[i]
 
-        # Pattern starts with a departure time line
         if not _is_time_line(current):
             i += 1
             continue
 
         dep_time = current.strip()
 
-        # Often the next non-empty line is "-"
         j = i + 1
         if j < len(lines) and lines[j] == "-":
             j += 1
@@ -224,7 +223,6 @@ def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> lis
         duration = lines[j].strip()
         j += 1
 
-        # Search route and stops in the next few lines
         route_found = False
         stops_value = None
         price_value = None
