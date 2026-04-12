@@ -155,7 +155,7 @@ def _group_rows(rows: list[dict]) -> dict[tuple[date, date], dict[str, dict[str,
                         r["price"],
                         r.get("outbound_departure", "99:99"),
                     ),
-                )[:3]
+                )[:5]
 
     return grouped
 
@@ -169,12 +169,20 @@ def _flatten_leg_groups(route_groups: dict[str, list[dict]]) -> list[dict]:
 
 
 def _build_option_line(item: dict) -> str:
-    return (
-        f"{item.get('origin', '')}→{item.get('destination', '')} | "
-        f"{item.get('airline', 'Unknown')} | "
-        f"{item.get('outbound_departure', 'N/A')}-{item.get('outbound_arrival', 'N/A')}"
-        f" | {_fmt_price_compact(item.get('price'))}"
-    )
+    link = item.get("source_url", "#")
+    return f"""
+      <div style="font-size:12px; line-height:1.45; color:#333; margin-bottom:8px;">
+        <div>
+          {item.get('origin', '')}→{item.get('destination', '')} |
+          {item.get('airline', 'Unknown')} |
+          {item.get('outbound_departure', 'N/A')}-{item.get('outbound_arrival', 'N/A')} |
+          {_fmt_price_compact(item.get('price'))}
+        </div>
+        <div style="margin-top:2px; font-size:11px;">
+          <a href="{link}">Abrir resultado</a>
+        </div>
+      </div>
+    """
 
 
 def _build_leg_compact_section(title: str, day_label: str, route_groups: dict[str, list[dict]]) -> str:
@@ -204,12 +212,8 @@ def _build_leg_compact_section(title: str, day_label: str, route_groups: dict[st
           <div style="padding:8px 10px;">
         """
 
-        for idx, item in enumerate(rows[:3], start=1):
-            html += f"""
-            <div style="font-size:12px; line-height:1.45; color:#333; margin-bottom:6px;">
-              {idx}) {_build_option_line(item)}
-            </div>
-            """
+        for item in rows[:5]:
+            html += _build_option_line(item)
 
         html += """
           </div>
