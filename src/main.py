@@ -2,21 +2,25 @@ from __future__ import annotations
 
 from datetime import date
 
-from src.dates import generate_pairs
+from src.planner import generate_weekend_pairs
 from src.scrapers.google_flights_ui import search_google_flights
 from src.report import build_html_report
-from src.mailer import send_email
+from src.emailer import send_email_html
 from src.store import init_db, save_weekend_snapshot
 from src.learning import run_learning_sampling
 
 
-def main():
+def main() -> None:
     run_date = date.today()
 
     init_db()
 
     print("[INFO] Generating weekend pairs...")
-    pairs = generate_pairs(7)
+    pairs = generate_weekend_pairs(
+        start_date=run_date,
+        weeks=7,
+        skip_weeks=1,
+    )
 
     print("[INFO] Scraping operational flights...")
     rows = search_google_flights(pairs)
@@ -50,9 +54,9 @@ def main():
     html = build_html_report(run_date, rows)
 
     print("[INFO] Sending email...")
-    send_email(
+    send_email_html(
         subject=f"Weekend Flight Report {run_date.isoformat()}",
-        html=html,
+        html_body=html,
     )
 
     print("[INFO] Running learning engine...")
