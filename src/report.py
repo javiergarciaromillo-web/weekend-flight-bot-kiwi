@@ -3,7 +3,11 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
-from src.store import get_weekend_history, get_latest_learning_opportunities, get_learning_stats
+from src.store import (
+    get_weekend_history,
+    get_latest_learning_opportunities,
+    get_learning_stats,
+)
 
 
 WEEKDAY_LABELS = {
@@ -164,12 +168,14 @@ def _flatten_leg_groups(route_groups: dict[str, list[dict]]) -> list[dict]:
     rows: list[dict] = []
     for route_key in sorted(route_groups.keys()):
         rows.extend(route_groups[route_key])
+
     rows.sort(key=lambda r: (r["price"], r.get("outbound_departure", "99:99")))
     return rows
 
 
 def _build_option_line(item: dict) -> str:
     link = item.get("source_url", "#")
+
     return f"""
       <div style="font-size:12px; line-height:1.45; color:#333; margin-bottom:8px;">
         <div>
@@ -228,6 +234,7 @@ def _build_history_summary_block(summary: dict) -> str:
     combo_today = summary["combo_today"]
     combo_prev = summary["combo_prev"]
     combo_hist_min = summary["combo_hist_min"]
+
     signal = _trend_label(combo_today, combo_hist_min)
     delta = _price_delta(combo_today, combo_prev)
     color = _delta_color(delta)
@@ -247,8 +254,59 @@ def _build_history_summary_block(summary: dict) -> str:
     """
 
 
+def _build_long_range_opportunities() -> str:
+    opportunities = get_latest_learning_opportunities(limit=8)
+
+    if not opportunities:
+        return ""
+
+    html = """
+      <div style="margin:12px; border:1px solid #dcdcdc; border-radius:10px; overflow:hidden;">
+        <div style="padding:12px 14px; background:#fafafa; border-bottom:1px solid #ececec;">
+          <div style="font-size:18px; font-weight:700;">Long-range opportunities</div>
+          <div style="font-size:12px; color:#666; margin-top:4px;">
+            Cheapest sampled future weekends at 30–150 days ahead.
+          </div>
+        </div>
+
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead>
+            <tr>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Dates</th>
+              <th style="text-align:left; padding:8px; border-bottom:1px solid #ddd;">Pattern</th>
+              <th style="text-align:right; padding:8px; border-bottom:1px solid #ddd;">Days</th>
+              <th style="text-align:right; padding:8px; border-bottom:1px solid #ddd;">Out</th>
+              <th style="text-align:right; padding:8px; border-bottom:1px solid #ddd;">In</th>
+              <th style="text-align:right; padding:8px; border-bottom:1px solid #ddd;">Combo</th>
+            </tr>
+          </thead>
+          <tbody>
+    """
+
+    for item in opportunities:
+        html += f"""
+            <tr>
+              <td style="padding:8px; border-bottom:1px solid #f1f1f1;">{item['outbound']} → {item['inbound']}</td>
+              <td style="padding:8px; border-bottom:1px solid #f1f1f1;">{item['pattern']}</td>
+              <td style="padding:8px; text-align:right; border-bottom:1px solid #f1f1f1;">{item['days_to_departure']}</td>
+              <td style="padding:8px; text-align:right; border-bottom:1px solid #f1f1f1;">{_fmt_price_compact(item['best_outbound'])}</td>
+              <td style="padding:8px; text-align:right; border-bottom:1px solid #f1f1f1;">{_fmt_price_compact(item['best_inbound'])}</td>
+              <td style="padding:8px; text-align:right; border-bottom:1px solid #f1f1f1; font-weight:700;">{_fmt_price_compact(item['best_combo'])}</td>
+            </tr>
+        """
+
+    html += """
+          </tbody>
+        </table>
+      </div>
+    """
+
+    return html
+
+
 def _build_history_table(summary: dict) -> str:
     history_rows = summary.get("history_rows", [])
+
     if not history_rows:
         return """
           <div style="padding:10px 14px; border-top:1px solid #ececec;">
@@ -286,6 +344,7 @@ def _build_history_table(summary: dict) -> str:
         </table>
       </div>
     """
+
     return html
 
 
@@ -299,10 +358,12 @@ def build_html_report(run_date, rows):
     global_best_inbound = _best_price(all_inbound_rows)
 
     combo_candidates = []
+
     for weekend_key in grouped:
         weekend_rows = [r for r in rows if (r["outbound"], r["inbound"]) == weekend_key]
         out_rows = [r for r in weekend_rows if r.get("leg_type") == "outbound"]
         in_rows = [r for r in weekend_rows if r.get("leg_type") == "inbound"]
+
         combo = _best_combo_price(out_rows, in_rows)
         if combo is not None:
             combo_candidates.append(combo)
@@ -313,6 +374,7 @@ def build_html_report(run_date, rows):
     <html>
       <body style="font-family: Arial, sans-serif; background:#f5f6f7; color:#222; margin:0; padding:14px;">
         <div style="max-width:980px; margin:0 auto; background:#fff; border:1px solid #ddd;">
+
           <div style="padding:14px 16px; border-bottom:1px solid #e5e5e5;">
             <div style="font-size:12px; color:#666;">Weekend Flight Bot</div>
             <div style="font-size:22px; font-weight:700; margin-top:4px;">Daily flight report</div>
@@ -323,14 +385,17 @@ def build_html_report(run_date, rows):
                 <div style="font-size:11px; color:#666;">Weekends</div>
                 <div style="font-size:18px; font-weight:700;">{len(grouped)}</div>
               </div>
+
               <div style="padding:10px; border:1px solid #eee; background:#fafafa;">
                 <div style="font-size:11px; color:#666;">Best outbound</div>
                 <div style="font-size:18px; font-weight:700;">{_fmt_price_compact(global_best_outbound)}</div>
               </div>
+
               <div style="padding:10px; border:1px solid #eee; background:#fafafa;">
                 <div style="font-size:11px; color:#666;">Best inbound</div>
                 <div style="font-size:18px; font-weight:700;">{_fmt_price_compact(global_best_inbound)}</div>
               </div>
+
               <div style="padding:10px; border:1px solid #eee; background:#fafafa;">
                 <div style="font-size:11px; color:#666;">Best combo</div>
                 <div style="font-size:18px; font-weight:700;">{_fmt_price_compact(global_best_combo)}</div>
@@ -338,6 +403,8 @@ def build_html_report(run_date, rows):
             </div>
           </div>
     """
+
+    html += _build_long_range_opportunities()
 
     if not rows:
         html += """
@@ -356,6 +423,7 @@ def build_html_report(run_date, rows):
         inbound_routes = weekend_data["inbound"]
 
         summary = _find_previous_and_history(weekend_outbound, weekend_inbound)
+
         outbound_flat = _flatten_leg_groups(outbound_routes)
         inbound_flat = _flatten_leg_groups(inbound_routes)
 
@@ -368,10 +436,12 @@ def build_html_report(run_date, rows):
 
         html += f"""
           <div style="margin:12px; border:1px solid #dcdcdc; border-radius:10px; overflow:hidden;">
+
             <div style="padding:12px 14px; background:#fafafa; border-bottom:1px solid #ececec;">
               <div style="font-size:18px; font-weight:700;">
                 Weekend starting {weekend_outbound.isoformat()} ({_fmt_day(weekend_outbound)} → {_fmt_day(weekend_inbound)})
               </div>
+
               <div style="margin-top:8px; display:flex; gap:18px; flex-wrap:wrap; font-size:13px;">
                 <div>Best outbound: <strong>{_fmt_price(best_out)}</strong></div>
                 <div>Best inbound: <strong>{_fmt_price(best_in)}</strong></div>
@@ -385,6 +455,7 @@ def build_html_report(run_date, rows):
                 <td style="width:50%; vertical-align:top; border-right:1px solid #eee;">
                   {_build_leg_compact_section("Outbound", _fmt_day(weekend_outbound), outbound_routes)}
                 </td>
+
                 <td style="width:50%; vertical-align:top;">
                   {_build_leg_compact_section("Inbound", _fmt_day(weekend_inbound), inbound_routes)}
                 </td>
@@ -393,6 +464,7 @@ def build_html_report(run_date, rows):
 
             {_build_history_summary_block(summary)}
             {_build_history_table(summary)}
+
           </div>
         """
 
