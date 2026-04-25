@@ -16,21 +16,39 @@ def main() -> None:
     init_db()
 
     print("[INFO] Generating weekend pairs...")
-    pairs = generate_weekend_pairs(start_date=run_date, weeks=7, skip_weeks=1)
+    pairs = generate_weekend_pairs(
+        start_date=run_date,
+        weeks=7,
+        skip_weeks=1,
+    )
 
     print("[INFO] Scraping operational flights...")
     rows = search_google_flights(pairs)
 
     for outbound, inbound in pairs:
-        weekend_rows = [r for r in rows if r["outbound"] == outbound and r["inbound"] == inbound]
+        weekend_rows = [
+            r for r in rows
+            if r["outbound"] == outbound and r["inbound"] == inbound
+        ]
+
         outbound_rows = [r for r in weekend_rows if r["leg_type"] == "outbound"]
         inbound_rows = [r for r in weekend_rows if r["leg_type"] == "inbound"]
 
         best_out = min([r["price"] for r in outbound_rows], default=None)
         best_in = min([r["price"] for r in inbound_rows], default=None)
-        best_combo = best_out + best_in if best_out is not None and best_in is not None else None
 
-        save_weekend_snapshot(run_date, outbound, inbound, best_out, best_in, best_combo)
+        best_combo = None
+        if best_out is not None and best_in is not None:
+            best_combo = best_out + best_in
+
+        save_weekend_snapshot(
+            run_date=run_date,
+            outbound=outbound,
+            inbound=inbound,
+            best_outbound=best_out,
+            best_inbound=best_in,
+            best_combo=best_combo,
+        )
 
     print("[INFO] Running learning engine before report...")
     run_learning_sampling(run_date)
