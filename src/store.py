@@ -139,3 +139,75 @@ def get_weekend_history(outbound, inbound):
         }
         for r in rows
     ]
+
+
+def get_latest_learning_opportunities(limit: int = 8):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT run_date, sample_name, outbound, inbound, days_to_departure,
+               pattern, best_outbound, best_inbound, best_combo
+        FROM learning_prices
+        WHERE run_date = (SELECT MAX(run_date) FROM learning_prices)
+          AND best_combo IS NOT NULL
+        ORDER BY best_combo ASC
+        LIMIT ?
+        """,
+        (limit,),
+    )
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return [
+        {
+            "run_date": r[0],
+            "sample_name": r[1],
+            "outbound": r[2],
+            "inbound": r[3],
+            "days_to_departure": r[4],
+            "pattern": r[5],
+            "best_outbound": r[6],
+            "best_inbound": r[7],
+            "best_combo": r[8],
+        }
+        for r in rows
+    ]
+
+
+def get_learning_stats(days_to_departure: int, pattern: str):
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        SELECT best_combo
+        FROM learning_prices
+        WHERE pattern = ?
+          AND days_to_departure BETWEEN ? AND ?
+          AND best_combo IS NOT NULL
+        """,
+        (
+            pattern,
+            max(0, days_to_departure - 10),
+            days_to_departure + 10,
+        ),
+    )
+
+    rows = [r[0] for r in cur.fetchall()]
+    conn.close()
+
+    if not rows:
+        return {
+            "count": 0,
+            "avg_combo": None,
+            "min_combo": None,
+        }
+
+    return {
+        "count": len(rows),
+        "avg_combo": sum(rows) / len(rows),
+        "min_combo": min(rows),
+    }
