@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date
 
-from src.store import get_weekend_history
+from src.store import get_weekend_history, get_latest_learning_opportunities, get_learning_stats
 
 
 WEEKDAY_LABELS = {
