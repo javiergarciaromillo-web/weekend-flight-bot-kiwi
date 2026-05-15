@@ -122,13 +122,18 @@ def _canonical_airline_name(raw: str) -> str:
 
 
 def _is_time_line(text: str) -> bool:
-    return re.fullmatch(r"\d{1,2}:\d{2}\s?(?:AM|PM)(?:\+1)?", text.strip(), flags=re.IGNORECASE) is not None
+    return re.fullmatch(
+        r"\d{1,2}:\d{2}\s?(?:AM|PM)(?:\+1)?",
+        text.strip(),
+        flags=re.IGNORECASE,
+    ) is not None
 
 
 def _is_airline_line(text: str) -> bool:
     t = text.strip().lower()
     return any(
-        x in t for x in [
+        x in t
+        for x in [
             "vueling",
             "transavia",
             "klm",
@@ -171,20 +176,6 @@ def _prepare_lines(page_text: str) -> list[str]:
 
 
 def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> list[dict]:
-    """
-    Parse the Google Flights plain text sequentially.
-
-    Expected pattern in the text:
-      time
-      -
-      time
-      airline
-      duration
-      ORIGIN-DEST
-      Nonstop / 1 stop
-      ...
-      €price
-    """
     lines = _prepare_lines(page_text)
     rows: list[dict] = []
 
@@ -281,20 +272,35 @@ def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> lis
     return deduped
 
 
-def _filter_relevant_flights(rows: list[dict], leg_date: date) -> list[dict]:
-    allowed_airlines = {"vueling", "transavia"}
-
+def _filter_relevant_flights(
+    rows: list[dict],
+    leg_date: date,
+    origin: str,
+    destination: str,
+    allow_klm_from_ams: bool = False,
+) -> list[dict]:
     filtered: list[dict] = []
 
     for row in rows:
-        if row["airline"].lower() not in allowed_airlines:
+        airline = row["airline"].lower()
+
+        airline_ok = airline in {"vueling", "transavia"}
+
+        if allow_klm_from_ams and airline == "klm":
+            airline_ok = origin == "AMS" or destination == "AMS"
+
+        if not airline_ok:
             continue
+
         if row["stops"].lower() != "nonstop":
             continue
+
         if not _departure_ok(leg_date, row["departure_time"]):
             continue
+
         if not (30 <= row["price"] <= 2000):
             continue
+
         filtered.append(row)
 
     filtered.sort(key=lambda r: (r["price"], r["departure_time"]))
@@ -361,8 +367,12 @@ def _run_one_leg_search(
     leg_date: date,
     weekend_outbound: date,
     weekend_inbound: date,
+    allow_klm_from_ams: bool = False,
 ) -> list[dict]:
-    label = f"{origin}_{destination}_{leg_date.isoformat()}_{weekend_outbound.isoformat()}_{weekend_inbound.isoformat()}"
+    label = (
+        f"{origin}_{destination}_{leg_date.isoformat()}_"
+        f"{weekend_outbound.isoformat()}_{weekend_inbound.isoformat()}"
+    )
     safe_label = _safe_name(label)
 
     url = _build_google_flights_url(
@@ -388,7 +398,13 @@ def _run_one_leg_search(
 
     page_text = _collect_page_text(page)
     parsed_rows = _extract_flight_blocks(page_text, origin=origin, destination=destination)
-    filtered_rows = _filter_relevant_flights(parsed_rows, leg_date=leg_date)
+    filtered_rows = _filter_relevant_flights(
+        rows=parsed_rows,
+        leg_date=leg_date,
+        origin=origin,
+        destination=destination,
+        allow_klm_from_ams=allow_klm_from_ams,
+    )
 
     _save_debug(
         page=page,
@@ -402,7 +418,7 @@ def _run_one_leg_search(
 
     results: list[dict] = []
 
-    for row in filtered_rows[:3]:
+    for row in filtered_rows[:5]:
         results.append(
             {
                 "origin": origin,
@@ -428,7 +444,10 @@ def _run_one_leg_search(
     return results
 
 
-def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
+def search_google_flights(
+    pairs: List[Tuple[date, date]],
+    allow_klm_from_ams: bool = False,
+) -> list[dict]:
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
     results: list[dict] = []
@@ -465,6 +484,7 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
                         leg_date=weekend_outbound,
                         weekend_outbound=weekend_outbound,
                         weekend_inbound=weekend_inbound,
+                        allow_klm_from_ams=allow_klm_from_ams,
                     )
                     results.extend(outbound_rows)
                 except PlaywrightTimeoutError as e:
@@ -480,6 +500,7 @@ def search_google_flights(pairs: List[Tuple[date, date]]) -> list[dict]:
                         leg_date=weekend_inbound,
                         weekend_outbound=weekend_outbound,
                         weekend_inbound=weekend_inbound,
+                        allow_klm_from_ams=allow_klm_from_ams,
                     )
                     results.extend(inbound_rows)
                 except PlaywrightTimeoutError as e:
