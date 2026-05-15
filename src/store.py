@@ -12,6 +12,11 @@ def get_conn():
     return sqlite3.connect(DB_PATH)
 
 
+def _columns(cur, table_name: str) -> set[str]:
+    cur.execute(f"PRAGMA table_info({table_name})")
+    return {row[1] for row in cur.fetchall()}
+
+
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
@@ -44,6 +49,27 @@ def init_db():
         )
         """
     )
+
+    cols = _columns(cur, "learning_prices")
+
+    extra_cols = {
+        "outbound_origin": "TEXT",
+        "outbound_destination": "TEXT",
+        "outbound_airline": "TEXT",
+        "outbound_departure_time": "TEXT",
+        "outbound_arrival_time": "TEXT",
+        "outbound_source_url": "TEXT",
+        "inbound_origin": "TEXT",
+        "inbound_destination": "TEXT",
+        "inbound_airline": "TEXT",
+        "inbound_departure_time": "TEXT",
+        "inbound_arrival_time": "TEXT",
+        "inbound_source_url": "TEXT",
+    }
+
+    for col, col_type in extra_cols.items():
+        if col not in cols:
+            cur.execute(f"ALTER TABLE learning_prices ADD COLUMN {col} {col_type}")
 
     conn.commit()
     conn.close()
@@ -88,13 +114,48 @@ def save_learning_snapshot(
     best_outbound,
     best_inbound,
     best_combo,
+    outbound_origin=None,
+    outbound_destination=None,
+    outbound_airline=None,
+    outbound_departure_time=None,
+    outbound_arrival_time=None,
+    outbound_source_url=None,
+    inbound_origin=None,
+    inbound_destination=None,
+    inbound_airline=None,
+    inbound_departure_time=None,
+    inbound_arrival_time=None,
+    inbound_source_url=None,
 ):
     conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
         """
-        INSERT INTO learning_prices VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO learning_prices (
+            run_date,
+            sample_name,
+            outbound,
+            inbound,
+            days_to_departure,
+            pattern,
+            best_outbound,
+            best_inbound,
+            best_combo,
+            outbound_origin,
+            outbound_destination,
+            outbound_airline,
+            outbound_departure_time,
+            outbound_arrival_time,
+            outbound_source_url,
+            inbound_origin,
+            inbound_destination,
+            inbound_airline,
+            inbound_departure_time,
+            inbound_arrival_time,
+            inbound_source_url
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             str(run_date),
@@ -106,6 +167,18 @@ def save_learning_snapshot(
             best_outbound,
             best_inbound,
             best_combo,
+            outbound_origin,
+            outbound_destination,
+            outbound_airline,
+            outbound_departure_time,
+            outbound_arrival_time,
+            outbound_source_url,
+            inbound_origin,
+            inbound_destination,
+            inbound_airline,
+            inbound_departure_time,
+            inbound_arrival_time,
+            inbound_source_url,
         ),
     )
 
@@ -141,14 +214,34 @@ def get_weekend_history(outbound, inbound):
     ]
 
 
-def get_latest_learning_opportunities(limit: int = 8):
+def get_latest_learning_opportunities(limit: int = 10):
     conn = get_conn()
     cur = conn.cursor()
 
     cur.execute(
         """
-        SELECT run_date, sample_name, outbound, inbound, days_to_departure,
-               pattern, best_outbound, best_inbound, best_combo
+        SELECT
+            run_date,
+            sample_name,
+            outbound,
+            inbound,
+            days_to_departure,
+            pattern,
+            best_outbound,
+            best_inbound,
+            best_combo,
+            outbound_origin,
+            outbound_destination,
+            outbound_airline,
+            outbound_departure_time,
+            outbound_arrival_time,
+            outbound_source_url,
+            inbound_origin,
+            inbound_destination,
+            inbound_airline,
+            inbound_departure_time,
+            inbound_arrival_time,
+            inbound_source_url
         FROM learning_prices
         WHERE run_date = (SELECT MAX(run_date) FROM learning_prices)
           AND best_combo IS NOT NULL
@@ -172,6 +265,18 @@ def get_latest_learning_opportunities(limit: int = 8):
             "best_outbound": r[6],
             "best_inbound": r[7],
             "best_combo": r[8],
+            "outbound_origin": r[9],
+            "outbound_destination": r[10],
+            "outbound_airline": r[11],
+            "outbound_departure_time": r[12],
+            "outbound_arrival_time": r[13],
+            "outbound_source_url": r[14],
+            "inbound_origin": r[15],
+            "inbound_destination": r[16],
+            "inbound_airline": r[17],
+            "inbound_departure_time": r[18],
+            "inbound_arrival_time": r[19],
+            "inbound_source_url": r[20],
         }
         for r in rows
     ]
