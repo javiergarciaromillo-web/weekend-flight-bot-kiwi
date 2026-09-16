@@ -64,3 +64,13 @@ jobs:
           name: debug-pages
           path: debug/
           if-no-files-found: warn
+
+  workflow-keepalive:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+
+    steps:
+      - name: Keep scheduled workflow alive
+        uses: liskin/gh-workflow-keepalive@v1
