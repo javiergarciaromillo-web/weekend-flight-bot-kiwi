@@ -160,7 +160,7 @@ def _is_route_line(text: str, origin: str, destination: str) -> bool:
 
 def _is_stops_line(text: str) -> bool:
     t = text.strip().lower()
-    return t in {"nonstop", "1 stop"}
+    return t == "nonstop" or re.fullmatch(r"\d+ stops?", t) is not None
 
 
 def _extract_price_from_line(text: str) -> float | None:
@@ -205,7 +205,10 @@ def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> lis
         arr_time = lines[j].strip()
         j += 1
 
-        if j >= len(lines) or not _is_airline_line(lines[j]):
+        # The route/time/duration structure identifies a flight, including airlines
+        # outside our preferences. Airline and stop preferences are applied later.
+        # Otherwise a page containing only connecting flights looks like a failure.
+        if j + 1 >= len(lines) or not _is_duration_line(lines[j + 1]):
             i += 1
             continue
 
@@ -430,7 +433,7 @@ def _run_one_leg_search(
 
     results: list[dict] = []
 
-    for row in filtered_rows[:5]:
+    for row in filtered_rows:
         results.append(
             {
                 "origin": origin,
