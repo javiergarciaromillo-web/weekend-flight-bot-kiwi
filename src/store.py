@@ -87,6 +87,10 @@ def save_weekend_snapshot(
     cur = conn.cursor()
 
     cur.execute(
+        "DELETE FROM weekend_prices WHERE run_date = ? AND outbound = ? AND inbound = ?",
+        (str(run_date), str(outbound), str(inbound)),
+    )
+    cur.execute(
         """
         INSERT INTO weekend_prices VALUES (?, ?, ?, ?, ?, ?)
         """,
@@ -130,6 +134,10 @@ def save_learning_snapshot(
     conn = get_conn()
     cur = conn.cursor()
 
+    cur.execute(
+        "DELETE FROM learning_prices WHERE run_date = ? AND sample_name = ?",
+        (str(run_date), sample_name),
+    )
     cur.execute(
         """
         INSERT INTO learning_prices (

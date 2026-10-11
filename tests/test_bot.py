@@ -1,0 +1,139 @@
+import tempfile
+import unittest
+from datetime import date
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from src.scrapers import google_flights_ui as scraper
+from src import report, store
+
+
+class SearchTests(unittest.TestCase):
+    def test_shared_legs_are_queried_once_and_rebound(self):
+        thu, fri = date(2026, 10, 22), date(2026, 10, 23)
+        sun, mon = date(2026, 10, 25), date(2026, 10, 26)
+        pairs = [(thu, sun), (thu, mon), (fri, sun), (fri, mon)]
+        def search(page, origin, destination, leg_date, outbound, inbound, **kwargs):
+            return [dict(origin=origin, destination=destination, leg_date=leg_date,
+                         outbound=outbound, inbound=inbound, price=100,
+                         leg_type='outbound' if destination == 'BCN' else 'inbound',
+                         outbound_departure='5:00 PM')]
+        with patch.object(scraper, 'sync_playwright', return_value=MagicMock()), patch.object(scraper, '_run_one_leg_search', side_effect=search) as call:
+            statuses = {}
+            rows = scraper.search_google_flights(pairs, diagnostics=statuses)
+        self.assertEqual(call.call_count, 8)
+        self.assertEqual(len(rows), 16)
+        for pair in pairs:
+            self.assertEqual(sum((r['outbound'], r['inbound']) == pair for r in rows), 4)
+        self.assertEqual(set(statuses.values()), {'ok'})
+
+    def test_learning_searches_all_patterns_in_one_batch(self):
+        from src import learning
+        with patch.object(learning, 'search_google_flights', return_value=[]) as search, patch.object(learning, 'save_learning_snapshot') as save:
+            learning.run_learning_sampling(date(2026, 10, 10))
+        self.assertEqual(search.call_count, 1)
+        self.assertEqual(save.call_count, 28)
+        self.assertTrue(search.call_args.kwargs['allow_klm_from_ams'])
+
+    def test_failed_search_is_reused_and_identified(self):
+        pairs = [(date(2026, 10, 22), date(2026, 10, 25)), (date(2026, 10, 23), date(2026, 10, 25))]
+        with patch.object(scraper, 'sync_playwright', return_value=MagicMock()), patch.object(scraper, '_run_one_leg_search', side_effect=RuntimeError('unavailable')) as call:
+            statuses = {}
+            rows = scraper.search_google_flights(pairs, diagnostics=statuses)
+        self.assertEqual(rows, [])
+        self.assertEqual(call.call_count, 6)
+        self.assertEqual(set(statuses.values()), {'failed'})
+
+    def test_parser_does_not_borrow_next_flight_price(self):
+        text = '\n'.join(['5:00 PM', '-', '7:00 PM', 'Vueling', '2 hr', 'AMS-BCN', 'Nonstop',
+                          '6:00 PM', '-', '8:00 PM', 'Transavia', '2 hr', 'AMS-BCN', 'Nonstop', '€100'])
+        rows = scraper._extract_flight_blocks(text, 'AMS', 'BCN')
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['airline'], 'Transavia')
+
+
+class ReportTests(unittest.TestCase):
+    def test_no_buy_signal_for_single_observation(self):
+        self.assertEqual(report._trend_label(142, 142, 1), 'Histórico insuficiente')
+        self.assertEqual(report._trend_label(142, 142, 5), 'Cerca del mínimo observado')
+        self.assertEqual(report._time('11:20 PM'), '23:20')
+        self.assertEqual(report._time('12:15 AM+1'), '00:15 +1')
+
+    def test_missing_weekends_and_failures_are_visible(self):
+        pair = (date(2026, 10, 22), date(2026, 10, 25))
+        diagnostics = {('AMS', 'BCN', pair[0]): 'failed'}
+        with patch.object(report, 'get_weekend_history', return_value=[]), patch.object(report, 'get_latest_learning_opportunities', return_value=[]):
+            html = report.build_html_report(date(2026, 10, 10), [], pairs=[pair], diagnostics=diagnostics)
+        self.assertIn('cobertura parcial', html)
+        self.assertIn('disponibilidad sin verificar', html)
+        self.assertIn('22 oct.', html)
+
+    def test_full_report_stays_compact_and_escapes_provider_values(self):
+        from src.planner import generate_weekend_pairs
+        pairs = generate_weekend_pairs(date(2026, 10, 10), 7, 1)
+        rows = [dict(outbound=o, inbound=i, origin='AMS' if leg == 'outbound' else 'BCN',
+                     destination='BCN' if leg == 'outbound' else 'AMS', leg_type=leg,
+                     airline='<bad>', price=100, outbound_departure='5:00 PM', outbound_arrival='7:00 PM',
+                     source_url='https://example.com') for o, i in pairs for leg in ['outbound', 'inbound']]
+        with patch.object(report, 'get_weekend_history', return_value=[]), patch.object(report, 'get_latest_learning_opportunities', return_value=[]):
+            html = report.build_html_report(date(2026, 10, 10), rows, pairs=pairs)
+        self.assertLess(len(html.encode()), 80000)
+        self.assertNotIn('<bad>', html)
+        self.assertIn('&lt;bad&gt;', html)
+        self.assertNotIn('Buy now', html)
+
+
+class HolidayTests(unittest.TestCase):
+    def test_easter_and_christmas_bridges(self):
+        from src.holidays import generate_holiday_pairs, workdays_affected, HOLIDAYS
+        pairs = generate_holiday_pairs(date(2026, 10, 10))
+        self.assertIn((date(2027, 3, 25), date(2027, 3, 29)), pairs)
+        self.assertIn((date(2026, 12, 22), date(2027, 1, 3)), pairs)
+        self.assertEqual(workdays_affected(date(2027, 3, 25), date(2027, 3, 29)), 0)
+        self.assertTrue(all(workdays_affected(*pair) <= 5 for pair in pairs))
+        self.assertNotIn(date(2027, 5, 5), HOLIDAYS)
+        self.assertIn(date(2027, 5, 3), HOLIDAYS)
+
+    def test_holiday_and_extended_return_times(self):
+        self.assertTrue(scraper._departure_ok(date(2027, 3, 29), '9:00 AM', 'inbound'))
+        self.assertTrue(scraper._departure_ok(date(2027, 3, 30), '9:00 AM', 'inbound'))
+        self.assertFalse(scraper._departure_ok(date(2027, 3, 25), '9:00 AM', 'outbound'))
+
+
+class BudgetTests(unittest.TestCase):
+    def test_allowances_are_not_claimed_as_remaining(self):
+        from src.budget import estimate_allocation
+        allocation = estimate_allocation(date(2027, 3, 25), date(2027, 3, 31))
+        self.assertEqual(allocation[2027]['remote'], 2)
+        self.assertEqual(allocation[2027]['leave'], 0)
+        self.assertTrue(allocation[2027]['verified'])
+        unknown = estimate_allocation(date(2026, 10, 29), date(2026, 11, 4))
+        self.assertFalse(unknown[2026]['verified'])
+        used = estimate_allocation(date(2027, 3, 25), date(2027, 3, 31), {2027: {'remote': 1, 'leave': 1}})
+        self.assertEqual(used[2027]['remote'], 1)
+        self.assertEqual(used[2027]['leave'], 1)
+        self.assertEqual(used[2027]['uncovered'], 0)
+
+    def test_years_have_separate_budgets(self):
+        from src.budget import estimate_allocation
+        allocation = estimate_allocation(date(2026, 12, 20), date(2027, 1, 5))
+        self.assertEqual(set(allocation), {2026, 2027})
+        self.assertEqual(allocation[2026]['required'], 2)
+        self.assertEqual(allocation[2027]['required'], 2)
+
+
+class StoreTests(unittest.TestCase):
+    def test_rerun_replaces_daily_snapshot(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(store, 'DB_PATH', Path(folder) / 'prices.db'):
+            store.init_db()
+            for price in [100, 90]:
+                store.save_weekend_snapshot('2026-10-10', '2026-10-22', '2026-10-25', price, 50, price+50)
+                store.save_learning_snapshot('2026-10-10', '30_THU-SUN', '2026-11-12', '2026-11-15', 33, 'THU-SUN', price, 50, price+50)
+            history = store.get_weekend_history('2026-10-22', '2026-10-25')
+            self.assertEqual(len(history), 1)
+            self.assertEqual(history[0]['best_combo'], 140)
+            self.assertEqual(len(store.get_latest_learning_opportunities()), 1)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from src.planner import generate_weekend_pairs
+from src.holidays import generate_holiday_pairs
 from src.scrapers.google_flights_ui import search_google_flights
 from src.report import build_html_report
 from src.emailer import send_email_html
@@ -11,7 +13,7 @@ from src.learning import run_learning_sampling
 
 
 def main() -> None:
-    run_date = date.today()
+    run_date = datetime.now(ZoneInfo("Europe/Amsterdam")).date()
 
     init_db()
 
@@ -22,8 +24,11 @@ def main() -> None:
         skip_weeks=1,
     )
 
+    pairs = sorted(set(pairs + generate_holiday_pairs(run_date)))
+
     print("[INFO] Scraping operational flights...")
-    rows = search_google_flights(pairs)
+    diagnostics = {}
+    rows = search_google_flights(pairs, diagnostics=diagnostics)
 
     for outbound, inbound in pairs:
         weekend_rows = [
@@ -54,7 +59,7 @@ def main() -> None:
     run_learning_sampling(run_date)
 
     print("[INFO] Building report...")
-    html = build_html_report(run_date, rows)
+    html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics)
 
     print("[INFO] Sending email...")
     send_email_html(
