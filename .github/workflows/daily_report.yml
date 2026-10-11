@@ -39,11 +39,20 @@ jobs:
 
       - name: Run bot
         env:
+          PYTHONUNBUFFERED: "1"
           GMAIL_SMTP_USER: ${{ secrets.GMAIL_SMTP_USER }}
           GMAIL_SMTP_APP_PASSWORD: ${{ secrets.GMAIL_SMTP_APP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           python -m src.main
+
+      - name: Upload report and observations
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: flight-report
+          path: data/report/
+          if-no-files-found: warn
 
       - name: Save historical DB cache
         uses: actions/cache/save@v4
@@ -59,6 +68,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload debug artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: debug-pages

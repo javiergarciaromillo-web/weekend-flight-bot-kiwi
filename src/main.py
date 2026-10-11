@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import json
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from src.planner import generate_weekend_pairs
@@ -8,7 +10,7 @@ from src.holidays import generate_holiday_pairs
 from src.scrapers.google_flights_ui import search_google_flights
 from src.report import build_html_report
 from src.emailer import send_email_html
-from src.store import init_db, save_weekend_snapshot
+from src.store import init_db, save_weekend_snapshot, get_latest_learning_opportunities
 from src.learning import run_learning_sampling
 
 
@@ -60,6 +62,21 @@ def main() -> None:
 
     print("[INFO] Building report...")
     html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics)
+
+    # Retain the exact report and source observations for review from this chat.
+    report_dir = Path('data/report')
+    report_dir.mkdir(parents=True, exist_ok=True)
+    (report_dir / 'report.html').write_text(html, encoding='utf-8')
+    (report_dir / 'report.json').write_text(json.dumps({
+        'schema_version': 1,
+        'run_date': run_date,
+        'pairs': pairs,
+        'flights': rows,
+        'queries': [dict(origin=o, destination=d, date=day, status=status)
+                    for (o, d, day), status in diagnostics.items()],
+        'learning': [o for o in get_latest_learning_opportunities(limit=100)
+                     if o['run_date'] == str(run_date)],
+    }, default=str, ensure_ascii=False, indent=2), encoding='utf-8')
 
     print("[INFO] Sending email...")
     send_email_html(

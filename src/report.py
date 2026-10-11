@@ -86,67 +86,165 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None):
         trips.append(dict(outbound=outbound, inbound=inbound, out=out, inc=inc,
                           total=total, delta=delta, minimum=minimum, count=len(valid)))
 
-    def card(trip, detail=False):
-        t = trip
-        change = f" · cambio {t['delta']:+.0f} €" if t['delta'] is not None else ''
-        body = (f"<b>{_fmt_day(t['outbound'])} → {_fmt_day(t['inbound'])}: {_price(t['total'])}</b>{change}"
-                f"<p>Ida: {_leg(t['out'], diagnostics, t['outbound'], True)}<br>"
-                f"Vuelta: {_leg(t['inc'], diagnostics, t['inbound'], False)}</p>")
-        holidays = holiday_dates(t['outbound'], t['inbound'])
-        if holidays:
-            affected = workdays_affected(t['outbound'], t['inbound'])
-            body += (f"<p>{(t['inbound']-t['outbound']).days} noches · "
-                     f"{affected} días laborables afectados · festivos NCIA: "
-                     + ', '.join(_fmt_day(d) for d in holidays) + '</p>')
-        allocation = estimate_allocation(t['outbound'], t['inbound'])
-        if allocation:
-            body += '<p><small>Reparto orientativo por viaje: '
-            body += '; '.join(f"{year}: {a['remote']} teletrabajo + {a['leave']} vacaciones"
-                              for year, a in allocation.items())
-            body += '</small></p>'
-        if detail:
-            body += (f"<small>{_trend_label(t['total'], t['minimum'], t['count'])} · "
-                     f"mínimo {_price(t['minimum'])} · {t['count']} días con precio completo</small>")
-        return f'<div style="padding:12px 0;border-bottom:1px solid #ddd">{body}</div>'
+    def compact_date(value):
+        return f"{WEEKDAYS[value.weekday()]} {value.day} {MONTHS[value.month-1]}"
 
-    html = (f'<html><body style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;'
-            f'max-width:680px;margin:auto;padding:16px;color:#222">'
-            f'<h2>Vuelos Países Bajos ↔ Barcelona</h2><p>{_fmt_day(run_date)} · {len(trips)} combinaciones</p>'
-            '<p>Vuelos directos. Jueves y domingo desde las 16:00; viernes y lunes todo el día. '
-            'Los festivos NCIA permiten ampliar fechas y horarios. Vueling y Transavia; KLM también en oportunidades lejanas vía AMS. '
-            'Precios observados: confirmar tarifa y equipaje antes de reservar. '
-            'El total suma dos billetes de ida y puede combinar AMS y RTM.</p>')
-    html += (f'<p>Presupuesto anual: {REMOTE_WORK_DAYS} días de teletrabajo desde España y '
-             f'{ANNUAL_LEAVE_DAYS} de vacaciones. Cupos completos confirmados para 2027; días arrastrados aún sin cuantificar. '
-             'Los repartos son alternativas; no se suman automáticamente entre viajes.</p>')
-    failed = sum(status == 'failed' for status in diagnostics.values())
-    if failed:
-        html += f'<p><b>{failed} consultas fallidas.</b> El informe tiene cobertura parcial.</p>'
+    def date_range(t):
+        start = compact_date(t['outbound'])
+        if t['outbound'].year != t['inbound'].year:
+            start += f" {t['outbound'].year}"
+        return f"{start} → {compact_date(t['inbound'])} {t['inbound'].year}"
+
+    def flight_line(row):
+        url = escape(row.get('source_url') or '#', quote=True)
+        return (f"{escape(row['origin'])}→{escape(row['destination'])} "
+                f"{_time(row.get('outbound_departure'))}–{_time(row.get('outbound_arrival'))} "
+                f'<span style="color:#64748b">{escape(row.get("airline") or "—")}</span> '
+                f'<a href="{url}" style="color:#2563eb">{_price(row.get("price"))}</a>')
+
+    def leg_lines(trip, outbound):
+        choices = sorted(trip['out' if outbound else 'inc'], key=lambda r: r['price'])[:2]
+        if not choices:
+            return _leg([], diagnostics, trip['outbound' if outbound else 'inbound'], outbound)
+        # Keep the alternative, with less emphasis than the cheapest leg.
+        return flight_line(choices[0]) + (
+            '<br><span style="color:#64748b;font-size:11px">Alternativa: '
+            + flight_line(choices[1]) + '</span>' if len(choices) > 1 else '')
+
+    def table(items):
+        result = ('<table role="table" width="100%" cellpadding="0" cellspacing="0" '
+                  'style="border-collapse:collapse;font-size:12px;line-height:1.5">'
+                  '<tr class="table-head" style="background:#eef2f6;text-align:left">'
+                  '<th style="padding:10px">Fechas y estancia</th>'
+                  '<th style="padding:10px">Vuelos · precio por trayecto</th>'
+                  '<th style="padding:10px;text-align:right">Total</th></tr>')
+        month = None
+        for t in items:
+            current = (t['outbound'].year, t['outbound'].month)
+            if current != month:
+                result += (f'<tr><td colspan="3" style="padding:12px 10px 6px;color:#475569;'
+                           f'font-weight:bold">{MONTHS[current[1]-1].upper()} {current[0]}</td></tr>')
+                month = current
+            nights = (t['inbound']-t['outbound']).days
+            affected = workdays_affected(t['outbound'], t['inbound'])
+            holidays = holiday_dates(t['outbound'], t['inbound'])
+            meta = f'{nights} noches · {affected} laborables'
+            if holidays:
+                meta += f'<br><span style="color:#9a6700">{len(holidays)} festivos NCIA</span>'
+            if t['out'] and t['inc']:
+                out = min(t['out'], key=lambda r: r['price'])
+                inc = min(t['inc'], key=lambda r: r['price'])
+                if out['origin'] != inc['destination']:
+                    meta += '<br><span style="color:#9a6700">Aeropuertos distintos</span>'
+            allocation = estimate_allocation(t['outbound'], t['inbound'])
+            if allocation:
+                meta += '<br>' + '; '.join(
+                    f"{year}: {a['remote']} TT / {a['leave']} vac."
+                    for year, a in allocation.items())
+            total = _price(t['total'])
+            if t['total'] is None:
+                total += '<br><small>Incompleto</small>'
+            if t['delta'] is not None:
+                color = '#15803d' if t['delta'] < 0 else '#64748b'
+                total += f'<br><span style="color:{color};font-size:11px">{t["delta"]:+.0f} €</span>'
+            if t['count'] >= 5:
+                total += (f'<br><span style="font-size:10px;color:#64748b">'
+                          f'Mín. {_price(t["minimum"])} · {t["count"]} observaciones</span>')
+            result += (
+                '<tr class="trip-row" style="border-bottom:1px solid #e2e8f0;vertical-align:top">'
+                f'<td class="trip-date" style="padding:10px;min-width:95px"><b>{compact_date(t["outbound"])}<br>'
+                f'→ {compact_date(t["inbound"])}'
+                + (f' {t["inbound"].year}' if t['inbound'].year != t['outbound'].year else '')
+                + '</b><br>'
+                f'<span style="font-size:11px;color:#64748b">{meta}</span></td>'
+                f'<td class="trip-flights" style="padding:10px"><b>Ida</b> · {leg_lines(t, True)}<br>'
+                f'<b>Vuelta</b> · {leg_lines(t, False)}</td>'
+                f'<td class="trip-total" style="padding:10px;text-align:right;white-space:nowrap"><b>{total}</b></td></tr>')
+        return result + '</table>'
+
     complete = sorted([t for t in trips if t['total'] is not None], key=lambda t: t['total'])
-    html += '<h3>Tres opciones más económicas</h3>'
-    html += ''.join(card(t, True) for t in complete[:3]) or '<p>Sin combinaciones completas verificadas.</p>'
+    failed = [(key, status) for key, status in diagnostics.items() if status == 'failed']
+    html = ('<html><head><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<style>@media screen and (max-width:540px){'
+            '.table-head{display:none}.trip-row{display:block;position:relative}'
+            '.trip-date,.trip-flights{display:block!important;text-align:left}'
+            '.trip-date{padding-right:90px!important}.trip-flights{padding-top:0!important}'
+            '.trip-total{position:absolute;top:0;right:0}.trip-row td{box-sizing:border-box}'
+            '}</style></head>'
+            f'<body style="margin:0;padding:12px;background:#f3f5f8;color:#172033;'
+            f'font-family:Arial,sans-serif;line-height:1.5">'
+            '<div style="max-width:760px;margin:auto;background:white;padding:18px">'
+            '<h1 style="font-size:23px;margin:0">Tus vuelos a Barcelona</h1>'
+            f'<p style="color:#64748b;margin:4px 0 18px">{_fmt_day(run_date)} · '
+            f'{len(complete)}/{len(trips)} viajes con precio completo</p>'
+            '<h2 style="font-size:18px">Las tres opciones más económicas</h2>')
+    for index, t in enumerate(complete[:3], 1):
+        out = min(t['out'], key=lambda r: r['price'])
+        inc = min(t['inc'], key=lambda r: r['price'])
+        change = f" · {t['delta']:+.0f} € frente a la última consulta" if t['delta'] is not None else ''
+        html += (f'<div style="padding:10px 12px;margin:8px 0;background:#eff6ff;border-left:3px solid #2563eb">'
+                 f'<b>{index}. {date_range(t)} · {_price(t["total"])}</b><br>'
+                 f'<span style="font-size:12px">{(t["inbound"]-t["outbound"]).days} noches · '
+                 f'salida {escape(out["origin"])} / regreso {escape(inc["destination"])}{change}</span></div>')
+    if not complete:
+        html += '<p>Sin combinaciones completas verificadas.</p>'
     drops = sorted([t for t in complete if t['delta'] is not None and t['delta'] <= -20], key=lambda t: t['delta'])
     if drops:
-        html += '<h3>Bajadas de al menos 20 €</h3>' + ''.join(card(t) for t in drops[:3])
-    bridges = [t for t in complete if holiday_dates(t['outbound'], t['inbound'])]
+        html += '<p style="color:#15803d"><b>Bajadas de al menos 20 €:</b> ' + '; '.join(
+            f'{compact_date(t["outbound"])} → {compact_date(t["inbound"])}: {t["delta"]:+.0f} €'
+            for t in drops[:3]) + '</p>'
+    if failed:
+        html += (f'<p style="padding:10px;background:#fff7ed;color:#9a3412">'
+                 f'<b>{len(failed)} consultas pendientes de verificar: cobertura parcial.</b> '
+                 'Los precios completos pueden existir por otro aeropuerto; no garantizan la opción más barata.</p>')
+
+    bridges = [t for t in trips if holiday_dates(t['outbound'], t['inbound'])]
+    ordinary = [t for t in trips if not holiday_dates(t['outbound'], t['inbound'])]
+    if ordinary:
+        html += '<h2 style="font-size:18px;margin-top:24px">Escapadas próximas</h2>' + table(ordinary)
     if bridges:
-        bridges.sort(key=lambda t: (workdays_affected(t['outbound'], t['inbound']),
-                                    -(t['inbound']-t['outbound']).days, t['total']))
-        html += '<h3>Más tiempo en España con festivos NCIA</h3>'
-        html += '<p>Días laborables afectados: estimación conservadora desde el día posterior a la ida hasta la vuelta. El reparto prioriza teletrabajo para conservar vacaciones y requiere saldo disponible.</p>'
-        html += ''.join(card(t) for t in bridges[:6])
-    html += '<h3>Próximas fechas</h3>' + ''.join(card(t, True) for t in trips)
+        ranked = sorted([t for t in bridges if t['total'] is not None], key=lambda t: (
+            workdays_affected(t['outbound'], t['inbound']), -(t['inbound']-t['outbound']).days, t['total']))
+        html += '<h2 style="font-size:18px;margin-top:24px">Estancias con festivos NCIA</h2>'
+        if ranked:
+            t = ranked[0]
+            html += (f'<p><b>Destacada por aprovechar días libres:</b> '
+                     f'{date_range(t)}, {(t["inbound"]-t["outbound"]).days} noches, '
+                     f'{workdays_affected(t["outbound"], t["inbound"])} laborables, {_price(t["total"])}.</p>')
+        html += table(bridges)
+
     opportunities = [o for o in get_latest_learning_opportunities(limit=10)
                      if o['run_date'] == str(run_date) and o['outbound'] >= str(run_date)][:3]
     if opportunities:
-        html += '<h3>Tres oportunidades a largo plazo</h3>'
+        html += '<h2 style="font-size:18px;margin-top:24px">Precios a más largo plazo</h2>'
         for item in opportunities:
-            html += f"<p><b>{_fmt_day(item['outbound'])} → {_fmt_day(item['inbound'])}: {_price(item['best_combo'])}</b><br>"
+            html += (f'<p><b>{_fmt_day(item["outbound"])} → {_fmt_day(item["inbound"])} · '
+                     f'{_price(item["best_combo"])}</b><br>')
             for leg in ['outbound', 'inbound']:
                 row = dict(origin=item.get(f'{leg}_origin') or '—', destination=item.get(f'{leg}_destination') or '—',
                            airline=item.get(f'{leg}_airline'), outbound_departure=item.get(f'{leg}_departure_time'),
                            outbound_arrival=item.get(f'{leg}_arrival_time'), price=item.get(f'best_{leg}'),
                            source_url=item.get(f'{leg}_source_url'))
-                html += _flight(row) + '<br>'
+                html += flight_line(row) + '<br>'
             html += '</p>'
-    return html + '</body></html>'
+
+    if failed:
+        html += '<h2 style="font-size:16px;margin-top:24px">Consultas sin verificar</h2><p style="font-size:12px">'
+        html += '<br>'.join(f'{escape(o)}→{escape(d)} · {_fmt_day(day)}' for (o, d, day), _ in sorted(failed)) + '</p>'
+    used_holidays = sorted({d for t in bridges for d in holiday_dates(t['outbound'], t['inbound'])})
+    html += ('<div style="border-top:1px solid #e2e8f0;margin-top:24px;padding-top:12px;'
+             'font-size:11px;color:#64748b"><b>Cómo leer el informe</b><br>'
+             'Total = los dos trayectos más baratos mostrados; puede combinar AMS y RTM. '
+             'Los enlaces en cada precio abren la búsqueda: confirmar tarifa y equipaje. '
+             'Cambio de precio = comparación con la última observación anterior. '
+             'El mínimo solo se muestra a partir de 5 días con precio completo.<br>'
+             'Vuelos directos de Vueling y Transavia; KLM también en el muestreo a largo plazo vía AMS. '
+             'Jueves y domingo desde las 16:00; viernes y lunes todo el día; horarios ampliados en festivos y estancias largas.<br>'
+             f'<b>Cupos 2027:</b> {REMOTE_WORK_DAYS} días de teletrabajo (TT) desde España y '
+             f'{ANNUAL_LEAVE_DAYS} de vacaciones; arrastre pendiente de cuantificar. '
+             'Los repartos por viaje son alternativas, no consumen saldo. '
+             'El saldo disponible de 2026 no está verificado. '
+             'Laborables: desde el día siguiente a la ida hasta la vuelta, inclusive; se supone trabajo antes de la ida.<br>')
+    if used_holidays:
+        html += '<b>Festivos NCIA utilizados:</b> ' + '; '.join(_fmt_day(d) for d in used_holidays) + '.<br>'
+    return html + '</div></div></body></html>'

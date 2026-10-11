@@ -30,6 +30,8 @@ La ejecución principal realiza búsquedas reales y envía un correo. Necesita `
 
 El flujo diario guarda `data/prices.db` en caché y como artefacto, y conserva páginas de diagnóstico en `debug/`. El flujo de pruebas de las propuestas de cambios usa datos simulados y no envía correos ni consulta precios.
 
+También publica el artefacto `flight-report`: `report.html` contiene el correo exacto y `report.json` las observaciones y estados de las consultas (esquema versión 1), para revisarlos desde el chat. Las tablas separan escapadas y estancias con festivos sin duplicar viajes, mantienen dos opciones por trayecto y se adaptan a pantallas pequeñas. Un resultado con escalas o de otra aerolínea es una consulta válida que no cumple los filtros, no un fallo de disponibilidad. Las consultas realmente no verificadas se detallan al final. Los registros de Python se publican sin buffering para seguir el progreso.
+
 ## Límites
 
 La extracción depende del formato de Google Flights. Los precios y equipaje deben confirmarse en la consulta enlazada. No existe aún detección automática de reservas compradas, cálculo de traslados/equipaje, prioridad personalizada de horarios ni supresión del correo diario por ausencia de cambios. `config/routes.yaml` pertenece a la versión anterior; los filtros activos están en `src/scrapers/google_flights_ui.py` y los horizontes en `src/main.py` y `src/learning.py`.

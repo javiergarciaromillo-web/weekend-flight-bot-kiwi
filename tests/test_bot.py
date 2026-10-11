@@ -51,6 +51,15 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['airline'], 'Transavia')
 
+    def test_connecting_flights_are_results_but_do_not_match_filters(self):
+        text = '\n'.join(['7:05 PM', '-', '11:00 AM+1', 'Air Algerie', '15 hr 55 min',
+                          'BCN–RTM', '1 stop', '€369', '8:00 AM', '-', '5:55 PM',
+                          'Iberia, British AirwaysOperated by BA Cityflyer', '9 hr 55 min',
+                          'BCN–RTM', '2 stops', '€1199'])
+        rows = scraper._extract_flight_blocks(text, 'BCN', 'RTM')
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(scraper._filter_relevant_flights(rows, date(2026, 10, 26), 'BCN', 'RTM'), [])
+
 
 class ReportTests(unittest.TestCase):
     def test_no_buy_signal_for_single_observation(self):
@@ -81,6 +90,21 @@ class ReportTests(unittest.TestCase):
         self.assertNotIn('<bad>', html)
         self.assertIn('&lt;bad&gt;', html)
         self.assertNotIn('Buy now', html)
+
+    def test_pairs_appear_once_in_comparison_and_missing_route_is_listed(self):
+        pair = (date(2027, 3, 25), date(2027, 3, 29))
+        diagnostics = {('BCN', 'RTM', pair[1]): 'failed'}
+        rows = [dict(outbound=pair[0], inbound=pair[1], origin='AMS' if leg == 'outbound' else 'BCN',
+                     destination='BCN' if leg == 'outbound' else 'AMS', leg_type=leg, airline='Vueling',
+                     price=100, outbound_departure='5:00 PM', outbound_arrival='7:00 PM',
+                     source_url='https://example.com') for leg in ['outbound', 'inbound']]
+        with patch.object(report, 'get_weekend_history', return_value=[]), patch.object(report, 'get_latest_learning_opportunities', return_value=[]):
+            html = report.build_html_report(date(2026, 10, 11), rows, pairs=[pair], diagnostics=diagnostics)
+        self.assertEqual(html.count('<b>Ida</b>'), 1)
+        self.assertEqual(html.count('<b>Vuelta</b>'), 1)
+        self.assertIn('BCN→RTM', html)
+        self.assertIn('Estancias con festivos NCIA', html)
+        self.assertNotIn('Histórico insuficiente', html)
 
 
 class HolidayTests(unittest.TestCase):
