@@ -36,7 +36,7 @@ def _best_row(rows: list[dict]) -> dict | None:
     return sorted(rows, key=lambda r: r["price"])[0]
 
 
-def run_learning_sampling(run_date: date):
+def run_learning_sampling(run_date: date, diagnostics=None):
     print("[INFO] Starting learning sampling...")
 
     samples = [
@@ -47,6 +47,7 @@ def run_learning_sampling(run_date: date):
     all_rows = search_google_flights(
         list(dict.fromkeys((outbound, inbound) for _, _, outbound, inbound in samples)),
         allow_klm_from_ams=True,
+        diagnostics=diagnostics,
     )
 
     for offset in OFFSETS:
@@ -101,3 +102,5 @@ def run_learning_sampling(run_date: date):
 
             except Exception as e:
                 print(f"[ERROR] Learning {offset} {pattern_name}: {e}")
+
+    return all_rows

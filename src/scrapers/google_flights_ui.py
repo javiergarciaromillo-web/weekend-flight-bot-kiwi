@@ -459,6 +459,41 @@ def _run_one_leg_search(
     return results
 
 
+def _bind_leg(rows, outbound, inbound):
+    """Apply trip-specific constraints to a verified route/date observation."""
+    return [dict(row, outbound=outbound, inbound=inbound) for row in rows
+            if not (row['destination'] == 'BCN'
+                    and holiday_dates(outbound, inbound)
+                    and not is_free_day(row['leg_date'])
+                    and (_parse_time_to_24h(row['outbound_departure']) is None
+                         or _parse_time_to_24h(row['outbound_departure'])
+                         < datetime.strptime('16:00', '%H:%M').time()))]
+
+
+def recover_failed_queries(pairs, rows, diagnostics, later_rows, later_diagnostics):
+    """Reuse successful learning queries without admitting learning-only airlines."""
+    recovered = {key for key, status in diagnostics.items()
+                 if status == 'failed' and later_diagnostics.get(key) in {'ok', 'filtered_empty'}}
+    if not recovered:
+        return rows
+    # Learning repeats a leg across combinations. Deduplicate before rebinding.
+    candidates = {}
+    for row in later_rows:
+        key = (row['origin'], row['destination'], row['leg_date'])
+        if key in recovered and row['airline'].lower() in {'vueling', 'transavia'}:
+            identity = (row['airline'], row['outbound_departure'], row['outbound_arrival'], row['price'])
+            candidates.setdefault(key, {})[identity] = row
+    result = list(rows)
+    for key in recovered:
+        flights = list(candidates.get(key, {}).values())
+        diagnostics[key] = 'ok' if flights else 'filtered_empty'
+        print(f"[INFO] Recovered {key[0]}->{key[1]} {key[2]} from learning observations")
+        for outbound, inbound in pairs:
+            if key[2] == (outbound if key[1] == 'BCN' else inbound):
+                result.extend(_bind_leg(flights, outbound, inbound))
+    return result
+
+
 def search_google_flights(
     pairs: List[Tuple[date, date]],
     allow_klm_from_ams: bool = False,
@@ -491,40 +526,53 @@ def search_google_flights(
         page = context.new_page()
 
         cache = {}
+        statuses = {}
+        queries = {}
         for weekend_outbound, weekend_inbound in pairs:
             for airport in ["AMS", "RTM"]:
                 for origin, destination, leg_date in (
                     (airport, "BCN", weekend_outbound),
                     ("BCN", airport, weekend_inbound),
                 ):
-                    key = (origin, destination, leg_date)
-                    if key not in cache:
-                        try:
-                            leg_rows = _run_one_leg_search(
-                                page, origin, destination, leg_date,
-                                weekend_outbound, weekend_inbound,
-                                allow_klm_from_ams=allow_klm_from_ams,
-                            )
-                            cache[key] = leg_rows
-                            status = "ok" if leg_rows else "filtered_empty"
-                        except Exception as e:
-                            print(f"[ERROR] Search {origin}->{destination} {leg_date}: {e}")
-                            cache[key] = []
-                            status = "failed"
-                        if diagnostics is not None:
-                            diagnostics[key] = status
-                    # Rebind the same observed leg to each weekend without mutating cache.
-                    results.extend(
-                        dict(row, outbound=weekend_outbound, inbound=weekend_inbound)
-                        for row in cache[key]
-                        if not (
-                            destination == "BCN"
-                            and holiday_dates(weekend_outbound, weekend_inbound)
-                            and not is_free_day(leg_date)
-                            and (_parse_time_to_24h(row["outbound_departure"]) is None
-                                 or _parse_time_to_24h(row["outbound_departure"]) < datetime.strptime("16:00", "%H:%M").time())
-                        )
-                    )
+                    queries.setdefault((origin, destination, leg_date), (weekend_outbound, weekend_inbound))
+
+        def query(key, attempt):
+            origin, destination, leg_date = key
+            outbound, inbound = queries[key]
+            try:
+                leg_rows = _run_one_leg_search(
+                    page, origin, destination, leg_date, outbound, inbound,
+                    allow_klm_from_ams=allow_klm_from_ams,
+                )
+                cache[key] = leg_rows
+                statuses[key] = "ok" if leg_rows else "filtered_empty"
+                if attempt > 1:
+                    print(f"[INFO] Recovered {origin}->{destination} {leg_date} on attempt {attempt}")
+            except Exception as e:
+                print(f"[ERROR] Search {origin}->{destination} {leg_date} attempt {attempt}/3: {e}")
+                cache[key] = []
+                statuses[key] = "failed"
+
+        for key in queries:
+            query(key, 1)
+        # Retry once the other dates have been visited, rather than hammering
+        # the same failing page. Never retry a verified filtered-empty result.
+        for attempt, delay_ms in [(2, 2000), (3, 5000)]:
+            failed = [key for key in queries if statuses[key] == "failed"]
+            if not failed:
+                break
+            page.wait_for_timeout(delay_ms)
+            for key in failed:
+                query(key, attempt)
+
+        if diagnostics is not None:
+            diagnostics.update(statuses)
+        # Build combinations only after retries, so every trip sharing a
+        # recovered route/date receives the same final observation.
+        for outbound, inbound in pairs:
+            for airport in ["AMS", "RTM"]:
+                for key in [(airport, "BCN", outbound), ("BCN", airport, inbound)]:
+                    results.extend(_bind_leg(cache[key], outbound, inbound))
 
         context.close()
         browser.close()

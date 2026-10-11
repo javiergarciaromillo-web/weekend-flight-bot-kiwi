@@ -1,4 +1,6 @@
 import tempfile
+import json
+import os
 import unittest
 from datetime import date
 from pathlib import Path
@@ -41,8 +43,58 @@ class SearchTests(unittest.TestCase):
             statuses = {}
             rows = scraper.search_google_flights(pairs, diagnostics=statuses)
         self.assertEqual(rows, [])
-        self.assertEqual(call.call_count, 6)
+        self.assertEqual(call.call_count, 18)
         self.assertEqual(set(statuses.values()), {'failed'})
+
+    def test_retry_recovers_every_pair_and_does_not_repeat_empty_results(self):
+        pairs = [(date(2026, 10, 22), date(2026, 10, 25)),
+                 (date(2026, 10, 23), date(2026, 10, 25))]
+        attempts = {}
+        def query(page, origin, destination, day, outbound, inbound, **kwargs):
+            key = (origin, destination, day)
+            attempts[key] = attempts.get(key, 0) + 1
+            if origin == 'BCN' and destination == 'AMS':
+                if attempts[key] == 1:
+                    raise RuntimeError('Google temporary error')
+                return [dict(origin=origin, destination=destination, leg_date=day,
+                             outbound=outbound, inbound=inbound, price=100, leg_type='inbound',
+                             outbound_departure='5:00 PM', outbound_arrival='7:00 PM')]
+            return []
+        with patch.object(scraper, 'sync_playwright', return_value=MagicMock()), patch.object(scraper, '_run_one_leg_search', side_effect=query):
+            statuses = {}
+            rows = scraper.search_google_flights(pairs, diagnostics=statuses)
+        self.assertEqual(attempts[('BCN', 'AMS', pairs[0][1])], 2)
+        self.assertTrue(all(n == 1 for key, n in attempts.items() if key != ('BCN', 'AMS', pairs[0][1])))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({(r['outbound'], r['inbound']) for r in rows}, set(pairs))
+        self.assertNotIn('failed', statuses.values())
+
+    def test_learning_recovery_excludes_klm_and_deduplicates_shared_leg(self):
+        pairs = [(date(2026, 11, 12), date(2026, 11, 15)),
+                 (date(2026, 11, 12), date(2026, 11, 16))]
+        key = ('AMS', 'BCN', pairs[0][0])
+        diagnostics = {key: 'failed'}
+        base = dict(origin='AMS', destination='BCN', leg_date=key[2], leg_type='outbound',
+                    outbound=pairs[0][0], inbound=pairs[0][1],
+                    outbound_departure='5:00 PM', outbound_arrival='7:00 PM')
+        vuelos = [dict(base, airline='Vueling', price=80), dict(base, airline='KLM', price=60)]
+        rows = scraper.recover_failed_queries(pairs, [], diagnostics, vuelos + vuelos, {key: 'ok'})
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({r['airline'] for r in rows}, {'Vueling'})
+        self.assertEqual(diagnostics[key], 'ok')
+        diagnostics[key] = 'failed'
+        self.assertEqual(scraper.recover_failed_queries(pairs, [], diagnostics, [vuelos[1]], {key: 'ok'}), [])
+        self.assertEqual(diagnostics[key], 'filtered_empty')
+
+    def test_learning_recovery_preserves_trip_departure_constraints(self):
+        pairs = [(date(2026, 10, 30), date(2026, 11, 2))]
+        key = ('AMS', 'BCN', pairs[0][0])
+        row = dict(origin='AMS', destination='BCN', leg_date=key[2], airline='Vueling', price=80,
+                   outbound=pairs[0][0], inbound=pairs[0][1], leg_type='outbound',
+                   outbound_departure='9:00 AM', outbound_arrival='11:00 AM')
+        diagnostics = {key: 'failed'}
+        self.assertEqual(scraper.recover_failed_queries(pairs, [], diagnostics, [row], {key: 'ok'}), [])
+        self.assertEqual(diagnostics[key], 'ok')
 
     def test_parser_does_not_borrow_next_flight_price(self):
         text = '\n'.join(['5:00 PM', '-', '7:00 PM', 'Vueling', '2 hr', 'AMS-BCN', 'Nonstop',
@@ -157,6 +209,42 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(len(history), 1)
             self.assertEqual(history[0]['best_combo'], 140)
             self.assertEqual(len(store.get_latest_learning_opportunities()), 1)
+
+    def test_main_saves_recovered_prices_and_final_diagnostics_before_email(self):
+        from src import main as app
+        pair = (date(2026, 11, 12), date(2026, 11, 15))
+        key = ('AMS', 'BCN', pair[0])
+        out = dict(origin='AMS', destination='BCN', leg_date=pair[0], airline='Vueling', price=80,
+                   outbound=pair[0], inbound=pair[1], leg_type='outbound',
+                   outbound_departure='5:00 PM', outbound_arrival='7:00 PM')
+        inc = dict(out, origin='BCN', destination='AMS', leg_date=pair[1], leg_type='inbound', price=50)
+        def operational(pairs, diagnostics):
+            diagnostics[key] = 'failed'
+            return [inc]
+        def learning(run_date, diagnostics):
+            diagnostics[key] = 'ok'
+            return [out]
+        with tempfile.TemporaryDirectory() as folder, patch.object(app, 'init_db'), \
+                patch.object(app, 'generate_weekend_pairs', return_value=[pair]), \
+                patch.object(app, 'generate_holiday_pairs', return_value=[]), \
+                patch.object(app, 'search_google_flights', side_effect=operational), \
+                patch.object(app, 'run_learning_sampling', side_effect=learning), \
+                patch.object(app, 'save_weekend_snapshot') as snapshot, \
+                patch.object(app, 'build_html_report', return_value='<html>recovered</html>') as build, \
+                patch.object(app, 'get_latest_learning_opportunities', return_value=[]), \
+                patch.object(app, 'send_email_html') as email:
+            previous = os.getcwd()
+            try:
+                os.chdir(folder)
+                app.main()
+                payload = json.loads(Path('data/report/report.json').read_text())
+            finally:
+                os.chdir(previous)
+        self.assertEqual(snapshot.call_args.kwargs['best_combo'], 130)
+        self.assertEqual(build.call_args.kwargs['diagnostics'][key], 'ok')
+        self.assertEqual(payload['queries'][0]['status'], 'ok')
+        self.assertEqual(len(payload['flights']), 2)
+        email.assert_called_once()
 
 
 if __name__ == '__main__':
