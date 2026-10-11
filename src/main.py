@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 
 from src.planner import generate_weekend_pairs
 from src.holidays import generate_holiday_pairs
-from src.scrapers.google_flights_ui import search_google_flights
+from src.scrapers.google_flights_ui import search_google_flights, recover_failed_queries
 from src.report import build_html_report
 from src.emailer import send_email_html
 from src.store import init_db, save_weekend_snapshot, get_latest_learning_opportunities
@@ -32,6 +32,12 @@ def main() -> None:
     diagnostics = {}
     rows = search_google_flights(pairs, diagnostics=diagnostics)
 
+    print("[INFO] Running learning engine before report...")
+    learning_diagnostics = {}
+    learning_rows = run_learning_sampling(run_date, diagnostics=learning_diagnostics)
+    rows = recover_failed_queries(pairs, rows, diagnostics, learning_rows, learning_diagnostics)
+
+    # Save and report only the final observations after all recovery attempts.
     for outbound, inbound in pairs:
         weekend_rows = [
             r for r in rows
@@ -56,9 +62,6 @@ def main() -> None:
             best_inbound=best_in,
             best_combo=best_combo,
         )
-
-    print("[INFO] Running learning engine before report...")
-    run_learning_sampling(run_date)
 
     print("[INFO] Building report...")
     html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics)
