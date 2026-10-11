@@ -39,15 +39,23 @@ def _best_row(rows: list[dict]) -> dict | None:
 def run_learning_sampling(run_date: date):
     print("[INFO] Starting learning sampling...")
 
+    samples = [
+        (offset, pattern, outbound, inbound)
+        for offset in OFFSETS
+        for pattern, outbound, inbound in _build_pairs_for_offset(run_date, offset)
+    ]
+    all_rows = search_google_flights(
+        list(dict.fromkeys((outbound, inbound) for _, _, outbound, inbound in samples)),
+        allow_klm_from_ams=True,
+    )
+
     for offset in OFFSETS:
         patterns = _build_pairs_for_offset(run_date, offset)
 
         for pattern_name, outbound, inbound in patterns:
             try:
-                rows = search_google_flights(
-                    [(outbound, inbound)],
-                    allow_klm_from_ams=True,
-                )
+                rows = [r for r in all_rows
+                        if r["outbound"] == outbound and r["inbound"] == inbound]
 
                 outbound_rows = [r for r in rows if r["leg_type"] == "outbound"]
                 inbound_rows = [r for r in rows if r["leg_type"] == "inbound"]

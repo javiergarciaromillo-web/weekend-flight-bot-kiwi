@@ -8,6 +8,8 @@ from datetime import date, datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
+from src.holidays import HOLIDAYS, holiday_dates, is_free_day
+
 DEBUG_DIR = Path("debug")
 
 
@@ -83,7 +85,7 @@ def _parse_time_to_24h(value: str) -> datetime.time | None:
     return None
 
 
-def _departure_ok(leg_date: date, departure_time: str) -> bool:
+def _departure_ok(leg_date: date, departure_time: str, leg_type: str | None = None) -> bool:
     """
     Rules:
     - Thursday outbound -> from 16:00
@@ -93,7 +95,10 @@ def _departure_ok(leg_date: date, departure_time: str) -> bool:
     """
     weekday = leg_date.weekday()
 
-    if weekday in (4, 0):  # Friday or Monday
+    if leg_type == "inbound" and weekday < 5:
+        return _parse_time_to_24h(departure_time) is not None
+
+    if leg_date in HOLIDAYS or weekday in (4, 0):  # Published holiday, Friday or Monday
         return True
 
     dep = _parse_time_to_24h(departure_time)
@@ -222,6 +227,9 @@ def _extract_flight_blocks(page_text: str, origin: str, destination: str) -> lis
         raw_block_lines = [dep_time, "-", arr_time, airline, duration]
 
         for k in range(j, scan_limit):
+            # Never borrow a route or price from the following flight block.
+            if _is_time_line(lines[k]):
+                break
             raw_block_lines.append(lines[k])
 
             if not route_found and _is_route_line(lines[k], origin, destination):
@@ -295,7 +303,8 @@ def _filter_relevant_flights(
         if row["stops"].lower() != "nonstop":
             continue
 
-        if not _departure_ok(leg_date, row["departure_time"]):
+        if not _departure_ok(leg_date, row["departure_time"],
+                             "outbound" if destination == "BCN" else "inbound"):
             continue
 
         if not (30 <= row["price"] <= 2000):
@@ -416,6 +425,9 @@ def _run_one_leg_search(
         filtered_rows=filtered_rows,
     )
 
+    if not parsed_rows:
+        raise ValueError("No flight blocks parsed; availability could not be verified")
+
     results: list[dict] = []
 
     for row in filtered_rows[:5]:
@@ -447,6 +459,7 @@ def _run_one_leg_search(
 def search_google_flights(
     pairs: List[Tuple[date, date]],
     allow_klm_from_ams: bool = False,
+    diagnostics: dict | None = None,
 ) -> list[dict]:
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -474,39 +487,41 @@ def search_google_flights(
 
         page = context.new_page()
 
+        cache = {}
         for weekend_outbound, weekend_inbound in pairs:
             for airport in ["AMS", "RTM"]:
-                try:
-                    outbound_rows = _run_one_leg_search(
-                        page=page,
-                        origin=airport,
-                        destination="BCN",
-                        leg_date=weekend_outbound,
-                        weekend_outbound=weekend_outbound,
-                        weekend_inbound=weekend_inbound,
-                        allow_klm_from_ams=allow_klm_from_ams,
+                for origin, destination, leg_date in (
+                    (airport, "BCN", weekend_outbound),
+                    ("BCN", airport, weekend_inbound),
+                ):
+                    key = (origin, destination, leg_date)
+                    if key not in cache:
+                        try:
+                            leg_rows = _run_one_leg_search(
+                                page, origin, destination, leg_date,
+                                weekend_outbound, weekend_inbound,
+                                allow_klm_from_ams=allow_klm_from_ams,
+                            )
+                            cache[key] = leg_rows
+                            status = "ok" if leg_rows else "filtered_empty"
+                        except Exception as e:
+                            print(f"[ERROR] Search {origin}->{destination} {leg_date}: {e}")
+                            cache[key] = []
+                            status = "failed"
+                        if diagnostics is not None:
+                            diagnostics[key] = status
+                    # Rebind the same observed leg to each weekend without mutating cache.
+                    results.extend(
+                        dict(row, outbound=weekend_outbound, inbound=weekend_inbound)
+                        for row in cache[key]
+                        if not (
+                            destination == "BCN"
+                            and holiday_dates(weekend_outbound, weekend_inbound)
+                            and not is_free_day(leg_date)
+                            and (_parse_time_to_24h(row["outbound_departure"]) is None
+                                 or _parse_time_to_24h(row["outbound_departure"]) < datetime.strptime("16:00", "%H:%M").time())
+                        )
                     )
-                    results.extend(outbound_rows)
-                except PlaywrightTimeoutError as e:
-                    print(f"[ERROR] Timeout outbound {airport}->BCN {weekend_outbound}: {e}")
-                except Exception as e:
-                    print(f"[ERROR] Outbound {airport}->BCN {weekend_outbound}: {e}")
-
-                try:
-                    inbound_rows = _run_one_leg_search(
-                        page=page,
-                        origin="BCN",
-                        destination=airport,
-                        leg_date=weekend_inbound,
-                        weekend_outbound=weekend_outbound,
-                        weekend_inbound=weekend_inbound,
-                        allow_klm_from_ams=allow_klm_from_ams,
-                    )
-                    results.extend(inbound_rows)
-                except PlaywrightTimeoutError as e:
-                    print(f"[ERROR] Timeout inbound BCN->{airport} {weekend_inbound}: {e}")
-                except Exception as e:
-                    print(f"[ERROR] Inbound BCN->{airport} {weekend_inbound}: {e}")
 
         context.close()
         browser.close()

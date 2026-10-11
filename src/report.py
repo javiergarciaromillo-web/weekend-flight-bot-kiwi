@@ -1,489 +1,152 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from datetime import date
+from datetime import date, datetime
+from html import escape
 
-from src.store import (
-    get_weekend_history,
-    get_latest_learning_opportunities,
-)
-
-
-WEEKDAY_LABELS = {
-    0: "Mon",
-    1: "Tue",
-    2: "Wed",
-    3: "Thu",
-    4: "Fri",
-    5: "Sat",
-    6: "Sun",
-}
+from src.store import get_weekend_history, get_latest_learning_opportunities
+from src.holidays import holiday_dates, workdays_affected
+from src.budget import REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, estimate_allocation
 
 
-def _weekday_short(d: date) -> str:
-    return WEEKDAY_LABELS[d.weekday()]
+WEEKDAYS = ['lun.', 'mar.', 'mié.', 'jue.', 'vie.', 'sáb.', 'dom.']
+MONTHS = ['ene.', 'feb.', 'mar.', 'abr.', 'may.', 'jun.', 'jul.', 'ago.', 'sep.', 'oct.', 'nov.', 'dic.']
 
 
-def _fmt_day(d: date) -> str:
-    return f"{_weekday_short(d)} {d.isoformat()}"
+def _fmt_day(value):
+    d = date.fromisoformat(value) if isinstance(value, str) else value
+    return f'{WEEKDAYS[d.weekday()]} {d.day} {MONTHS[d.month-1]} {d.year}'
 
 
-def _fmt_price(value: float | None) -> str:
-    return "—" if value is None else f"{value:.2f} EUR"
+def _price(value):
+    return '—' if value is None else f'{value:.0f} €'
 
 
-def _fmt_price_compact(value: float | None) -> str:
-    return "—" if value is None else f"{value:.0f} €"
+def _time(value):
+    value = value or '—'
+    suffix = ' +1' if '+1' in value else ''
+    clean = value.replace('+1', '').strip()
+    for fmt in ('%I:%M %p', '%H:%M'):
+        try:
+            return datetime.strptime(clean.upper(), fmt).strftime('%H:%M') + suffix
+        except ValueError:
+            pass
+    return escape(value)
 
 
-def _price_delta(current: float | None, previous: float | None) -> str:
+def _trend_label(current, historical_min, observation_count=0):
     if current is None:
-        return "—"
-    if previous is None:
-        return "new"
-
-    diff = round(current - previous, 2)
-    if diff == 0:
-        return "0.00"
-    if diff > 0:
-        return f"+{diff:.2f}"
-    return f"{diff:.2f}"
-
-
-def _delta_color(delta: str) -> str:
-    if delta == "new":
-        return "#1d4ed8"
-    if delta.startswith("+"):
-        return "#b42318"
-    if delta.startswith("-"):
-        return "#027a48"
-    return "#666"
-
-
-def _trend_label(current: float | None, historical_min: float | None) -> str:
-    if current is None or historical_min is None or historical_min <= 0:
-        return "Too early to tell"
-
+        return 'Precio incompleto'
+    if observation_count < 5 or historical_min is None or historical_min <= 0:
+        return 'Histórico insuficiente'
     ratio = current / historical_min
-
     if ratio <= 1.03:
-        return "Buy now"
+        return 'Cerca del mínimo observado'
     if ratio <= 1.08:
-        return "Probably buy soon"
-    if ratio <= 1.18:
-        return "Watch closely"
-    return "Too early to tell"
-
-
-def _best_price(rows: list[dict]) -> float | None:
-    if not rows:
-        return None
-    return min(row["price"] for row in rows)
-
-
-def _best_combo_price(outbound_rows: list[dict], inbound_rows: list[dict]) -> float | None:
-    out_best = _best_price(outbound_rows)
-    in_best = _best_price(inbound_rows)
-
-    if out_best is None or in_best is None:
-        return None
-
-    return out_best + in_best
-
-
-def _find_previous_and_history(
-    weekend_outbound: date,
-    weekend_inbound: date,
-) -> dict[str, float | None | list[dict]]:
-    history = get_weekend_history(weekend_outbound, weekend_inbound)
-
-    if not history:
-        return {
-            "outbound_today": None,
-            "inbound_today": None,
-            "combo_today": None,
-            "outbound_prev": None,
-            "inbound_prev": None,
-            "combo_prev": None,
-            "outbound_hist_min": None,
-            "inbound_hist_min": None,
-            "combo_hist_min": None,
-            "history_rows": [],
-        }
-
-    today_row = history[-1]
-    prev_row = history[-2] if len(history) >= 2 else None
-
-    outbound_hist_values = [r["best_outbound"] for r in history if r["best_outbound"] is not None]
-    inbound_hist_values = [r["best_inbound"] for r in history if r["best_inbound"] is not None]
-    combo_hist_values = [r["best_combo"] for r in history if r["best_combo"] is not None]
-
-    return {
-        "outbound_today": today_row["best_outbound"],
-        "inbound_today": today_row["best_inbound"],
-        "combo_today": today_row["best_combo"],
-        "outbound_prev": prev_row["best_outbound"] if prev_row else None,
-        "inbound_prev": prev_row["best_inbound"] if prev_row else None,
-        "combo_prev": prev_row["best_combo"] if prev_row else None,
-        "outbound_hist_min": min(outbound_hist_values) if outbound_hist_values else None,
-        "inbound_hist_min": min(inbound_hist_values) if inbound_hist_values else None,
-        "combo_hist_min": min(combo_hist_values) if combo_hist_values else None,
-        "history_rows": history[-6:],
-    }
-
-
-def _group_rows(rows: list[dict]) -> dict[tuple[date, date], dict[str, dict[str, list[dict]]]]:
-    grouped: dict[tuple[date, date], dict[str, dict[str, list[dict]]]] = {}
-
-    for row in rows:
-        weekend_key = (row["outbound"], row["inbound"])
-        grouped.setdefault(
-            weekend_key,
-            {
-                "outbound": defaultdict(list),
-                "inbound": defaultdict(list),
-            },
-        )
-
-        leg_type = row.get("leg_type", "outbound")
-        route_key = f"{row['origin']} → {row['destination']}"
-        grouped[weekend_key][leg_type][route_key].append(row)
-
-    for weekend_key in grouped:
-        for leg_type in ["outbound", "inbound"]:
-            for route_key in grouped[weekend_key][leg_type]:
-                grouped[weekend_key][leg_type][route_key] = sorted(
-                    grouped[weekend_key][leg_type][route_key],
-                    key=lambda r: (
-                        r["price"],
-                        r.get("outbound_departure", "99:99"),
-                    ),
-                )[:5]
-
-    return grouped
-
-
-def _flatten_leg_groups(route_groups: dict[str, list[dict]]) -> list[dict]:
-    rows: list[dict] = []
-    for route_key in sorted(route_groups.keys()):
-        rows.extend(route_groups[route_key])
-
-    rows.sort(key=lambda r: (r["price"], r.get("outbound_departure", "99:99")))
-    return rows
-
-
-def _build_option_line(item: dict) -> str:
-    link = item.get("source_url", "#")
-
-    return f"""
-      <div style="font-size:12px; line-height:1.45; color:#333; margin-bottom:8px;">
-        <div>
-          {item.get('origin', '')}→{item.get('destination', '')} |
-          {item.get('airline', 'Unknown')} |
-          {item.get('outbound_departure', 'N/A')}-{item.get('outbound_arrival', 'N/A')} |
-          {_fmt_price_compact(item.get('price'))}
-        </div>
-        <div style="margin-top:2px; font-size:11px;">
-          <a href="{link}">Abrir resultado</a>
-        </div>
-      </div>
-    """
-
-
-def _build_leg_compact_section(title: str, day_label: str, route_groups: dict[str, list[dict]]) -> str:
-    html = f"""
-      <div style="padding:12px 14px;">
-        <div style="font-size:15px; font-weight:700; color:#111;">{title}</div>
-        <div style="margin-top:2px; font-size:12px; color:#666;">{day_label}</div>
-    """
-
-    if not route_groups:
-        html += """
-        <div style="margin-top:10px; font-size:12px; color:#999;">No options found.</div>
-        """
-        html += "</div>"
-        return html
-
-    for route_key in sorted(route_groups.keys()):
-        rows = route_groups[route_key]
-        best = rows[0]["price"] if rows else None
-
-        html += f"""
-        <div style="margin-top:10px; border:1px solid #ececec; border-radius:8px; overflow:hidden;">
-          <div style="padding:8px 10px; background:#fafafa; border-bottom:1px solid #ececec;">
-            <span style="font-size:13px; font-weight:700;">{route_key}</span>
-            <span style="float:right; font-size:13px; font-weight:700;">{_fmt_price_compact(best)}</span>
-          </div>
-          <div style="padding:8px 10px;">
-        """
-
-        for item in rows[:5]:
-            html += _build_option_line(item)
-
-        html += """
-          </div>
-        </div>
-        """
-
-    html += "</div>"
-    return html
-
-
-def _build_history_summary_block(summary: dict) -> str:
-    combo_today = summary["combo_today"]
-    combo_prev = summary["combo_prev"]
-    combo_hist_min = summary["combo_hist_min"]
-
-    signal = _trend_label(combo_today, combo_hist_min)
-    delta = _price_delta(combo_today, combo_prev)
-    color = _delta_color(delta)
-
-    return f"""
-      <div style="padding:10px 14px; border-top:1px solid #ececec; background:#fcfcfc;">
-        <div style="font-size:12px; color:#444;">
-          Combo today: <strong>{_fmt_price(combo_today)}</strong>
-          &nbsp;&nbsp;|&nbsp;&nbsp;
-          vs prev: <strong style="color:{color};">{delta}</strong>
-          &nbsp;&nbsp;|&nbsp;&nbsp;
-          Hist. min: <strong>{_fmt_price(combo_hist_min)}</strong>
-          &nbsp;&nbsp;|&nbsp;&nbsp;
-          Signal: <strong>{signal}</strong>
-        </div>
-      </div>
-    """
-
-
-def _build_long_range_opportunities() -> str:
-    opportunities = get_latest_learning_opportunities(limit=10)
-
-    if not opportunities:
-        return ""
-
-    html = """
-      <div style="margin:12px; border:1px solid #dcdcdc; border-radius:10px; overflow:hidden;">
-        <div style="padding:12px 14px; background:#fafafa; border-bottom:1px solid #ececec;">
-          <div style="font-size:18px; font-weight:700;">Long-range opportunities</div>
-          <div style="font-size:12px; color:#666; margin-top:4px;">
-            Cheapest sampled future weekends at 30–150 days ahead. KLM is allowed here only for AMS.
-          </div>
-        </div>
-    """
-
-    for item in opportunities:
-        outbound_link = item.get("outbound_source_url") or "#"
-        inbound_link = item.get("inbound_source_url") or "#"
-
-        html += f"""
-          <div style="padding:12px 14px; border-bottom:1px solid #f1f1f1;">
-            <div style="font-size:14px; font-weight:700;">
-              {item['outbound']} → {item['inbound']} |
-              {item['pattern']} |
-              {item['days_to_departure']} days out |
-              Combo: {_fmt_price_compact(item['best_combo'])}
-            </div>
-
-            <div style="margin-top:8px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
-              <div style="padding:8px 10px; border:1px solid #ececec; border-radius:8px; background:#fff;">
-                <div style="font-size:12px; font-weight:700;">Outbound</div>
-                <div style="margin-top:4px; font-size:12px;">
-                  {item.get('outbound_origin') or '—'}→{item.get('outbound_destination') or '—'} |
-                  {item.get('outbound_airline') or '—'} |
-                  {item.get('outbound_departure_time') or '—'}-{item.get('outbound_arrival_time') or '—'} |
-                  {_fmt_price_compact(item.get('best_outbound'))}
-                </div>
-                <div style="margin-top:4px; font-size:11px;">
-                  <a href="{outbound_link}">Abrir ida</a>
-                </div>
-              </div>
-
-              <div style="padding:8px 10px; border:1px solid #ececec; border-radius:8px; background:#fff;">
-                <div style="font-size:12px; font-weight:700;">Inbound</div>
-                <div style="margin-top:4px; font-size:12px;">
-                  {item.get('inbound_origin') or '—'}→{item.get('inbound_destination') or '—'} |
-                  {item.get('inbound_airline') or '—'} |
-                  {item.get('inbound_departure_time') or '—'}-{item.get('inbound_arrival_time') or '—'} |
-                  {_fmt_price_compact(item.get('best_inbound'))}
-                </div>
-                <div style="margin-top:4px; font-size:11px;">
-                  <a href="{inbound_link}">Abrir vuelta</a>
-                </div>
-              </div>
-            </div>
-          </div>
-        """
-
-    html += "</div>"
-    return html
-
-
-def _build_history_table(summary: dict) -> str:
-    history_rows = summary.get("history_rows", [])
-
-    if not history_rows:
-        return """
-          <div style="padding:10px 14px; border-top:1px solid #ececec;">
-            <div style="font-size:12px; color:#888;">No historical data yet.</div>
-          </div>
-        """
-
-    html = """
-      <div style="padding:10px 14px; border-top:1px solid #ececec;">
-        <div style="font-size:13px; font-weight:700; margin-bottom:8px;">Recent history</div>
-        <table style="width:100%; border-collapse:collapse; font-size:12px;">
-          <thead>
-            <tr>
-              <th style="text-align:left; padding:6px; border-bottom:1px solid #ddd;">Date</th>
-              <th style="text-align:right; padding:6px; border-bottom:1px solid #ddd;">Outbound</th>
-              <th style="text-align:right; padding:6px; border-bottom:1px solid #ddd;">Inbound</th>
-              <th style="text-align:right; padding:6px; border-bottom:1px solid #ddd;">Combo</th>
-            </tr>
-          </thead>
-          <tbody>
-    """
-
-    for row in history_rows:
-        html += f"""
-            <tr>
-              <td style="padding:6px; border-bottom:1px solid #f1f1f1;">{row['run_date']}</td>
-              <td style="padding:6px; text-align:right; border-bottom:1px solid #f1f1f1;">{_fmt_price_compact(row['best_outbound'])}</td>
-              <td style="padding:6px; text-align:right; border-bottom:1px solid #f1f1f1;">{_fmt_price_compact(row['best_inbound'])}</td>
-              <td style="padding:6px; text-align:right; border-bottom:1px solid #f1f1f1;">{_fmt_price_compact(row['best_combo'])}</td>
-            </tr>
-        """
-
-    html += """
-          </tbody>
-        </table>
-      </div>
-    """
-
-    return html
-
-
-def build_html_report(run_date, rows):
-    grouped = _group_rows(rows)
-
-    all_outbound_rows = [r for r in rows if r.get("leg_type") == "outbound"]
-    all_inbound_rows = [r for r in rows if r.get("leg_type") == "inbound"]
-
-    global_best_outbound = _best_price(all_outbound_rows)
-    global_best_inbound = _best_price(all_inbound_rows)
-
-    combo_candidates = []
-
-    for weekend_key in grouped:
-        weekend_rows = [r for r in rows if (r["outbound"], r["inbound"]) == weekend_key]
-        out_rows = [r for r in weekend_rows if r.get("leg_type") == "outbound"]
-        in_rows = [r for r in weekend_rows if r.get("leg_type") == "inbound"]
-
-        combo = _best_combo_price(out_rows, in_rows)
-        if combo is not None:
-            combo_candidates.append(combo)
-
-    global_best_combo = min(combo_candidates) if combo_candidates else None
-
-    html = f"""
-    <html>
-      <body style="font-family: Arial, sans-serif; background:#f5f6f7; color:#222; margin:0; padding:14px;">
-        <div style="max-width:980px; margin:0 auto; background:#fff; border:1px solid #ddd;">
-
-          <div style="padding:14px 16px; border-bottom:1px solid #e5e5e5;">
-            <div style="font-size:12px; color:#666;">Weekend Flight Bot</div>
-            <div style="font-size:22px; font-weight:700; margin-top:4px;">Daily flight report</div>
-            <div style="font-size:12px; color:#666; margin-top:4px;">Run date: {run_date.isoformat()}</div>
-
-            <div style="margin-top:12px; display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
-              <div style="padding:10px; border:1px solid #eee; background:#fafafa;">
-                <div style="font-size:11px; color:#666;">Weekends</div>
-                <div style="font-size:18px; font-weight:700;">{len(grouped)}</div>
-              </div>
-
-              <div style="padding:10px; border:1px solid #eee; background:#fafafa;">
-                <div style="font-size:11px; color:#666;">Best outbound</div>
-                <div style="font-size:18px; font-weight:700;">{_fmt_price_compact(global_best_outbound)}</div>
-              </div>
-
-              <div style="padding:10px; border:1px solid #eee; background:#fafafa;">
-                <div style="font-size:11px; color:#666;">Best inbound</div>
-                <div style="font-size:18px; font-weight:700;">{_fmt_price_compact(global_best_inbound)}</div>
-              </div>
-
-              <div style="padding:10px; border:1px solid #eee; background:#fafafa;">
-                <div style="font-size:11px; color:#666;">Best combo</div>
-                <div style="font-size:18px; font-weight:700;">{_fmt_price_compact(global_best_combo)}</div>
-              </div>
-            </div>
-          </div>
-    """
-
-    html += _build_long_range_opportunities()
-
-    if not rows:
-        html += """
-          <div style="padding:20px;">
-            <div style="font-size:18px; font-weight:700;">No flights found</div>
-          </div>
-        """
-        html += "</div></body></html>"
-        return html
-
-    for weekend_key in sorted(grouped.keys(), key=lambda x: (x[0], x[1])):
-        weekend_outbound, weekend_inbound = weekend_key
-        weekend_data = grouped[weekend_key]
-
-        outbound_routes = weekend_data["outbound"]
-        inbound_routes = weekend_data["inbound"]
-
-        summary = _find_previous_and_history(weekend_outbound, weekend_inbound)
-
-        outbound_flat = _flatten_leg_groups(outbound_routes)
-        inbound_flat = _flatten_leg_groups(inbound_routes)
-
-        best_out = _best_price(outbound_flat)
-        best_in = _best_price(inbound_flat)
-        best_combo = _best_combo_price(outbound_flat, inbound_flat)
-
-        combo_delta = _price_delta(best_combo, summary["combo_prev"])
-        combo_delta_color = _delta_color(combo_delta)
-
-        html += f"""
-          <div style="margin:12px; border:1px solid #dcdcdc; border-radius:10px; overflow:hidden;">
-
-            <div style="padding:12px 14px; background:#fafafa; border-bottom:1px solid #ececec;">
-              <div style="font-size:18px; font-weight:700;">
-                Weekend starting {weekend_outbound.isoformat()} ({_fmt_day(weekend_outbound)} → {_fmt_day(weekend_inbound)})
-              </div>
-
-              <div style="margin-top:8px; display:flex; gap:18px; flex-wrap:wrap; font-size:13px;">
-                <div>Best outbound: <strong>{_fmt_price(best_out)}</strong></div>
-                <div>Best inbound: <strong>{_fmt_price(best_in)}</strong></div>
-                <div>Best manual combo: <strong>{_fmt_price(best_combo)}</strong></div>
-                <div>Δ prev: <strong style="color:{combo_delta_color};">{combo_delta}</strong></div>
-              </div>
-            </div>
-
-            <table style="width:100%; border-collapse:collapse; table-layout:fixed;">
-              <tr>
-                <td style="width:50%; vertical-align:top; border-right:1px solid #eee;">
-                  {_build_leg_compact_section("Outbound", _fmt_day(weekend_outbound), outbound_routes)}
-                </td>
-
-                <td style="width:50%; vertical-align:top;">
-                  {_build_leg_compact_section("Inbound", _fmt_day(weekend_inbound), inbound_routes)}
-                </td>
-              </tr>
-            </table>
-
-            {_build_history_summary_block(summary)}
-            {_build_history_table(summary)}
-
-          </div>
-        """
-
-    html += """
-        </div>
-      </body>
-    </html>
-    """
-
-    return html
+        return 'Hasta un 8 % sobre el mínimo'
+    return 'Por encima del mínimo observado'
+
+
+def _flight(row):
+    url = escape(row.get('source_url') or '#', quote=True)
+    return (f"{escape(row['origin'])}→{escape(row['destination'])} · "
+            f"{escape(row.get('airline') or '—')} · "
+            f"{_time(row.get('outbound_departure'))}–{_time(row.get('outbound_arrival'))} · "
+            f"{_price(row.get('price'))} "
+            f'<a href="{url}">Consultar precio</a>')
+
+
+def _leg(rows, diagnostics, leg_date, outbound):
+    if rows:
+        return '<br>'.join(_flight(r) for r in sorted(rows, key=lambda r: r['price'])[:2])
+    keys = [(airport, 'BCN', leg_date) if outbound else ('BCN', airport, leg_date)
+            for airport in ['AMS', 'RTM']]
+    if any(diagnostics.get(key) == 'failed' for key in keys):
+        return 'Consulta fallida: disponibilidad sin verificar'
+    if all(diagnostics.get(key) == 'filtered_empty' for key in keys):
+        return 'Sin opciones que cumplan los filtros'
+    return 'Sin resultados verificados'
+
+
+def build_html_report(run_date, rows, pairs=None, diagnostics=None):
+    diagnostics = diagnostics or {}
+    pairs = sorted(set(pairs or [(r['outbound'], r['inbound']) for r in rows]))
+    trips = []
+    for outbound, inbound in pairs:
+        selected = [r for r in rows if (r['outbound'], r['inbound']) == (outbound, inbound)]
+        out = [r for r in selected if r['leg_type'] == 'outbound']
+        inc = [r for r in selected if r['leg_type'] == 'inbound']
+        total = min(r['price'] for r in out) + min(r['price'] for r in inc) if out and inc else None
+        # One observation per run date; exclude future records and incomplete totals.
+        history = {h['run_date']: h for h in get_weekend_history(outbound, inbound)
+                   if h['run_date'] <= str(run_date) and h['best_combo'] is not None}
+        valid = sorted(history.values(), key=lambda h: h['run_date'])
+        previous = [h for h in valid if h['run_date'] < str(run_date)]
+        minimum = min((h['best_combo'] for h in valid), default=None)
+        delta = total - previous[-1]['best_combo'] if total is not None and previous else None
+        trips.append(dict(outbound=outbound, inbound=inbound, out=out, inc=inc,
+                          total=total, delta=delta, minimum=minimum, count=len(valid)))
+
+    def card(trip, detail=False):
+        t = trip
+        change = f" · cambio {t['delta']:+.0f} €" if t['delta'] is not None else ''
+        body = (f"<b>{_fmt_day(t['outbound'])} → {_fmt_day(t['inbound'])}: {_price(t['total'])}</b>{change}"
+                f"<p>Ida: {_leg(t['out'], diagnostics, t['outbound'], True)}<br>"
+                f"Vuelta: {_leg(t['inc'], diagnostics, t['inbound'], False)}</p>")
+        holidays = holiday_dates(t['outbound'], t['inbound'])
+        if holidays:
+            affected = workdays_affected(t['outbound'], t['inbound'])
+            body += (f"<p>{(t['inbound']-t['outbound']).days} noches · "
+                     f"{affected} días laborables afectados · festivos NCIA: "
+                     + ', '.join(_fmt_day(d) for d in holidays) + '</p>')
+        allocation = estimate_allocation(t['outbound'], t['inbound'])
+        if allocation:
+            body += '<p><small>Reparto orientativo por viaje: '
+            body += '; '.join(f"{year}: {a['remote']} teletrabajo + {a['leave']} vacaciones"
+                              for year, a in allocation.items())
+            body += '</small></p>'
+        if detail:
+            body += (f"<small>{_trend_label(t['total'], t['minimum'], t['count'])} · "
+                     f"mínimo {_price(t['minimum'])} · {t['count']} días con precio completo</small>")
+        return f'<div style="padding:12px 0;border-bottom:1px solid #ddd">{body}</div>'
+
+    html = (f'<html><body style="font-family:Arial,sans-serif;font-size:14px;line-height:1.5;'
+            f'max-width:680px;margin:auto;padding:16px;color:#222">'
+            f'<h2>Vuelos Países Bajos ↔ Barcelona</h2><p>{_fmt_day(run_date)} · {len(trips)} combinaciones</p>'
+            '<p>Vuelos directos. Jueves y domingo desde las 16:00; viernes y lunes todo el día. '
+            'Los festivos NCIA permiten ampliar fechas y horarios. Vueling y Transavia; KLM también en oportunidades lejanas vía AMS. '
+            'Precios observados: confirmar tarifa y equipaje antes de reservar. '
+            'El total suma dos billetes de ida y puede combinar AMS y RTM.</p>')
+    html += (f'<p>Presupuesto anual: {REMOTE_WORK_DAYS} días de teletrabajo desde España y '
+             f'{ANNUAL_LEAVE_DAYS} de vacaciones. Cupos completos confirmados para 2027; días arrastrados aún sin cuantificar. '
+             'Los repartos son alternativas; no se suman automáticamente entre viajes.</p>')
+    failed = sum(status == 'failed' for status in diagnostics.values())
+    if failed:
+        html += f'<p><b>{failed} consultas fallidas.</b> El informe tiene cobertura parcial.</p>'
+    complete = sorted([t for t in trips if t['total'] is not None], key=lambda t: t['total'])
+    html += '<h3>Tres opciones más económicas</h3>'
+    html += ''.join(card(t, True) for t in complete[:3]) or '<p>Sin combinaciones completas verificadas.</p>'
+    drops = sorted([t for t in complete if t['delta'] is not None and t['delta'] <= -20], key=lambda t: t['delta'])
+    if drops:
+        html += '<h3>Bajadas de al menos 20 €</h3>' + ''.join(card(t) for t in drops[:3])
+    bridges = [t for t in complete if holiday_dates(t['outbound'], t['inbound'])]
+    if bridges:
+        bridges.sort(key=lambda t: (workdays_affected(t['outbound'], t['inbound']),
+                                    -(t['inbound']-t['outbound']).days, t['total']))
+        html += '<h3>Más tiempo en España con festivos NCIA</h3>'
+        html += '<p>Días laborables afectados: estimación conservadora desde el día posterior a la ida hasta la vuelta. El reparto prioriza teletrabajo para conservar vacaciones y requiere saldo disponible.</p>'
+        html += ''.join(card(t) for t in bridges[:6])
+    html += '<h3>Próximas fechas</h3>' + ''.join(card(t, True) for t in trips)
+    opportunities = [o for o in get_latest_learning_opportunities(limit=10)
+                     if o['run_date'] == str(run_date) and o['outbound'] >= str(run_date)][:3]
+    if opportunities:
+        html += '<h3>Tres oportunidades a largo plazo</h3>'
+        for item in opportunities:
+            html += f"<p><b>{_fmt_day(item['outbound'])} → {_fmt_day(item['inbound'])}: {_price(item['best_combo'])}</b><br>"
+            for leg in ['outbound', 'inbound']:
+                row = dict(origin=item.get(f'{leg}_origin') or '—', destination=item.get(f'{leg}_destination') or '—',
+                           airline=item.get(f'{leg}_airline'), outbound_departure=item.get(f'{leg}_departure_time'),
+                           outbound_arrival=item.get(f'{leg}_arrival_time'), price=item.get(f'best_{leg}'),
+                           source_url=item.get(f'{leg}_source_url'))
+                html += _flight(row) + '<br>'
+            html += '</p>'
+    return html + '</body></html>'
