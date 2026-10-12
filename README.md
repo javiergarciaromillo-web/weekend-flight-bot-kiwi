@@ -5,15 +5,16 @@ Informe diario de vuelos directos entre AMS/RTM y BCN, con histórico SQLite y e
 ## Búsqueda y filtros actuales
 
 - Próximas siete semanas, omitiendo los primeros siete días.
-- Ida jueves desde las 16:00 o viernes a cualquier hora.
-- Vuelta domingo desde las 16:00 o lunes a cualquier hora.
-- Vueling y Transavia; el muestreo lejano también admite KLM en rutas con AMS.
-- Cada ruta y fecha se consulta una sola vez por lote. El muestreo lejano usa otro lote porque admite otras aerolíneas.
+- Escapadas jueves–domingo, jueves–lunes o viernes–lunes. Se excluye viernes–domingo.
+- Ida jueves desde las 17:00 o viernes a cualquier hora.
+- Vuelta domingo desde las 16:00 o lunes con salida hasta las 08:00 inclusive o desde las 17:00. Las ventanas de jueves y lunes también se mantienen en festivos.
+- Vueling y Transavia; KLM también en búsquedas habituales y lejanas en rutas con AMS.
+- Cada ruta y fecha se consulta una sola vez por lote. El muestreo lejano utiliza otro lote para sus fechas adicionales.
 - Un fallo de consulta o una página sin bloques reconocibles significa disponibilidad sin verificar. Una página con vuelos reconocidos, todos descartados, significa sin opciones que cumplan los filtros.
 
 El informe abre con las tres combinaciones operativas más económicas, destaca bajadas de al menos 20 € y muestra un resumen por combinación con hasta dos opciones por trayecto. Termina con tres oportunidades lejanas observadas ese día. El total suma billetes de ida independientes y puede combinar aeropuertos.
 
-Las valoraciones describen la distancia al mínimo observado; no predicen precios ni recomiendan comprar. Se necesitan al menos cinco fechas con precio completo para valorar el histórico. Las ejecuciones repetidas sustituyen la observación del mismo día.
+Las valoraciones describen la distancia al mínimo observado; no predicen precios ni recomiendan comprar. Se necesitan al menos cinco fechas con precio completo para valorar el histórico. Las ejecuciones repetidas sustituyen la observación del mismo día. El histórico comparable empieza el 12 de octubre de 2026, al cambiar las ventanas horarias y admitir KLM: las observaciones anteriores se conservan, pero no se usan para calcular mínimos o bajadas con estos filtros.
 
 ## Ejecución local
 
@@ -32,7 +33,7 @@ El flujo diario guarda `data/prices.db` en caché y como artefacto, y conserva p
 
 También publica el artefacto `flight-report`: `report.html` contiene el correo exacto y `report.json` las observaciones y estados de las consultas (esquema versión 1), para revisarlos desde el chat. Las tablas separan escapadas y estancias con festivos sin duplicar viajes, mantienen dos opciones por trayecto y se adaptan a pantallas pequeñas. Un resultado con escalas o de otra aerolínea es una consulta válida que no cumple los filtros, no un fallo de disponibilidad. Las consultas realmente no verificadas se detallan al final. Los registros de Python se publican sin buffering para seguir el progreso.
 
-Las consultas fallidas se reintentan en dos pasadas al final de cada lote (máximo tres intentos por ruta/fecha, con pausas de 2 y 5 segundos entre pasadas). Los resultados válidos que no cumplen los filtros no se reintentan. Si el muestreo posterior recupera una consulta operativa, se reutiliza antes de guardar el histórico y enviar el informe, manteniendo los filtros operativos: KLM no se incorpora a las escapadas ordinarias. Solo se muestran como sin verificar los fallos que persistan tras la recuperación. Los reintentos pueden alargar la ejecución y no garantizan que Google Flights responda.
+Las consultas fallidas se reintentan en dos pasadas al final de cada lote (máximo tres intentos por ruta/fecha, con pausas de 2 y 5 segundos entre pasadas). Los resultados válidos que no cumplen los filtros no se reintentan. Si el muestreo posterior recupera una consulta operativa, se reutiliza antes de guardar el histórico y enviar el informe, manteniendo los filtros operativos de horarios y de aerolíneas por aeropuerto. Solo se muestran como sin verificar los fallos que persistan tras la recuperación. Los reintentos pueden alargar la ejecución y no garantizan que Google Flights responda.
 
 ## Límites
 
@@ -42,7 +43,7 @@ La extracción depende del formato de Google Flights. Los precios y equipaje deb
 
 `src/holidays.py` recoge las fechas oficiales NCIA de La Haya de 2026 y 2027 facilitadas por el usuario. Incluye los días sustitutorios y el cierre navideño; no añade festivos nacionales que NCIA no haya publicado. La búsqueda operativa añade puentes para los próximos 180 días y muestrea hasta seis opciones por bloque (de cero a cinco días laborables afectados), priorizando la duración. No es una búsqueda exhaustiva de todas las fechas posibles.
 
-El informe destaca noches en España, festivos y días laborables afectados. Esta última cifra cuenta conservadoramente las fechas laborables posteriores a la ida y hasta la vuelta; presupone trabajar antes de la salida de tarde y no da por autorizado el teletrabajo o las vacaciones. Un regreso temprano puede requerir menos permiso del indicado. Se mantienen los horarios ordinarios; en un festivo publicado se permite volar todo el día. El calendario posterior a 2027 está pendiente de publicación.
+El informe destaca noches en España, festivos y días laborables afectados. Esta última cifra cuenta conservadoramente las fechas laborables posteriores a la ida y hasta la vuelta; presupone trabajar antes de la salida de tarde y no da por autorizado el teletrabajo o las vacaciones. Un regreso temprano puede requerir menos permiso del indicado. Se mantienen los horarios ordinarios de jueves y lunes también en festivos; otros días festivos pueden ampliar horarios. Se conservan las estancias largas que incluyan festivos. El calendario posterior a 2027 está pendiente de publicación.
 
 ## Presupuesto anual
 

@@ -14,7 +14,7 @@ class SearchTests(unittest.TestCase):
     def test_shared_legs_are_queried_once_and_rebound(self):
         thu, fri = date(2026, 10, 22), date(2026, 10, 23)
         sun, mon = date(2026, 10, 25), date(2026, 10, 26)
-        pairs = [(thu, sun), (thu, mon), (fri, sun), (fri, mon)]
+        pairs = [(thu, sun), (thu, mon), (fri, mon)]
         def search(page, origin, destination, leg_date, outbound, inbound, **kwargs):
             return [dict(origin=origin, destination=destination, leg_date=leg_date,
                          outbound=outbound, inbound=inbound, price=100,
@@ -24,7 +24,7 @@ class SearchTests(unittest.TestCase):
             statuses = {}
             rows = scraper.search_google_flights(pairs, diagnostics=statuses)
         self.assertEqual(call.call_count, 8)
-        self.assertEqual(len(rows), 16)
+        self.assertEqual(len(rows), 12)
         for pair in pairs:
             self.assertEqual(sum((r['outbound'], r['inbound']) == pair for r in rows), 4)
         self.assertEqual(set(statuses.values()), {'ok'})
@@ -34,11 +34,11 @@ class SearchTests(unittest.TestCase):
         with patch.object(learning, 'search_google_flights', return_value=[]) as search, patch.object(learning, 'save_learning_snapshot') as save:
             learning.run_learning_sampling(date(2026, 10, 10))
         self.assertEqual(search.call_count, 1)
-        self.assertEqual(save.call_count, 28)
+        self.assertEqual(save.call_count, 21)
         self.assertTrue(search.call_args.kwargs['allow_klm_from_ams'])
 
     def test_failed_search_is_reused_and_identified(self):
-        pairs = [(date(2026, 10, 22), date(2026, 10, 25)), (date(2026, 10, 23), date(2026, 10, 25))]
+        pairs = [(date(2026, 10, 22), date(2026, 10, 25)), (date(2026, 10, 22), date(2026, 10, 26))]
         with patch.object(scraper, 'sync_playwright', return_value=MagicMock()), patch.object(scraper, '_run_one_leg_search', side_effect=RuntimeError('unavailable')) as call:
             statuses = {}
             rows = scraper.search_google_flights(pairs, diagnostics=statuses)
@@ -48,7 +48,7 @@ class SearchTests(unittest.TestCase):
 
     def test_retry_recovers_every_pair_and_does_not_repeat_empty_results(self):
         pairs = [(date(2026, 10, 22), date(2026, 10, 25)),
-                 (date(2026, 10, 23), date(2026, 10, 25))]
+                 (date(2026, 10, 21), date(2026, 10, 25))]
         attempts = {}
         def query(page, origin, destination, day, outbound, inbound, **kwargs):
             key = (origin, destination, day)
@@ -69,7 +69,7 @@ class SearchTests(unittest.TestCase):
         self.assertEqual({(r['outbound'], r['inbound']) for r in rows}, set(pairs))
         self.assertNotIn('failed', statuses.values())
 
-    def test_learning_recovery_excludes_klm_and_deduplicates_shared_leg(self):
+    def test_learning_recovery_allows_klm_only_via_ams_and_deduplicates(self):
         pairs = [(date(2026, 11, 12), date(2026, 11, 15)),
                  (date(2026, 11, 12), date(2026, 11, 16))]
         key = ('AMS', 'BCN', pairs[0][0])
@@ -79,12 +79,42 @@ class SearchTests(unittest.TestCase):
                     outbound_departure='5:00 PM', outbound_arrival='7:00 PM')
         vuelos = [dict(base, airline='Vueling', price=80), dict(base, airline='KLM', price=60)]
         rows = scraper.recover_failed_queries(pairs, [], diagnostics, vuelos + vuelos, {key: 'ok'})
-        self.assertEqual(len(rows), 2)
-        self.assertEqual({r['airline'] for r in rows}, {'Vueling'})
+        self.assertEqual(len(rows), 4)
+        self.assertEqual({r['airline'] for r in rows}, {'Vueling', 'KLM'})
         self.assertEqual(diagnostics[key], 'ok')
-        diagnostics[key] = 'failed'
-        self.assertEqual(scraper.recover_failed_queries(pairs, [], diagnostics, [vuelos[1]], {key: 'ok'}), [])
-        self.assertEqual(diagnostics[key], 'filtered_empty')
+        rtm_key = ('RTM', 'BCN', key[2])
+        diagnostics = {rtm_key: 'failed'}
+        self.assertEqual(scraper.recover_failed_queries(pairs, [], diagnostics,
+                         [dict(vuelos[1], origin='RTM')], {rtm_key: 'ok'}), [])
+        self.assertEqual(diagnostics[rtm_key], 'filtered_empty')
+
+    def test_weekly_time_boundaries_and_early_monday_klm(self):
+        thu, mon = date(2026, 10, 22), date(2026, 10, 26)
+        self.assertFalse(scraper._departure_ok(thu, '4:59 PM', 'outbound'))
+        self.assertTrue(scraper._departure_ok(thu, '5:00 PM', 'outbound'))
+        for time, expected in [('7:59 AM', True), ('8:00 AM', True), ('8:01 AM', False),
+                               ('4:59 PM', False), ('5:00 PM', True), ('11:20 PM', True)]:
+            self.assertEqual(scraper._departure_ok(mon, time, 'inbound'), expected, time)
+        row = dict(airline='KLM', departure_time='6:00 AM', arrival_time='8:30 AM',
+                   stops='Nonstop', price=75)
+        self.assertEqual(scraper._filter_relevant_flights([row], mon, 'BCN', 'AMS'), [row])
+        self.assertEqual(scraper._filter_relevant_flights([row], mon, 'BCN', 'RTM'), [])
+        self.assertEqual(scraper._filter_relevant_flights([dict(row, departure_time='10:00 AM')],
+                                                        mon, 'BCN', 'AMS'), [])
+
+    def test_friday_sunday_pairs_are_removed_everywhere(self):
+        from src.planner import generate_weekend_pairs, allowed_pair
+        from src.learning import _build_pairs_for_offset
+        pairs = generate_weekend_pairs(date(2026, 10, 19), 1)
+        self.assertEqual([(o.weekday(), i.weekday()) for o, i in pairs], [(3, 6), (3, 0), (4, 0)])
+        self.assertEqual([name for name, _, _ in _build_pairs_for_offset(date(2026, 10, 12), 30)],
+                         ['THU-SUN', 'THU-MON', 'FRI-MON'])
+        excluded = (date(2026, 10, 23), date(2026, 10, 25))
+        with patch.object(scraper, 'sync_playwright', return_value=MagicMock()), \
+                patch.object(scraper, '_run_one_leg_search') as query:
+            self.assertEqual(scraper.search_google_flights([excluded]), [])
+        query.assert_not_called()
+        self.assertTrue(allowed_pair(date(2026, 12, 25), date(2027, 1, 3)))
 
     def test_learning_recovery_preserves_trip_departure_constraints(self):
         pairs = [(date(2026, 10, 30), date(2026, 11, 2))]
@@ -114,6 +144,24 @@ class SearchTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
+    def test_removed_pattern_and_incompatible_history_are_not_reported(self):
+        pair = (date(2026, 10, 22), date(2026, 10, 25))
+        removed = (date(2026, 10, 23), date(2026, 10, 25))
+        rows = [dict(outbound=pair[0], inbound=pair[1], origin='AMS' if leg == 'outbound' else 'BCN',
+                     destination='BCN' if leg == 'outbound' else 'AMS', leg_type=leg, airline='KLM', price=100,
+                     outbound_departure='5:00 PM', outbound_arrival='7:00 PM', source_url='https://example.com')
+                for leg in ['outbound', 'inbound']]
+        history = [dict(run_date='2026-10-11', best_combo=50),
+                   dict(run_date='2026-10-12', best_combo=210)]
+        old_opportunity = dict(run_date='2026-10-13', outbound=str(removed[0]), inbound=str(removed[1]), best_combo=50)
+        with patch.object(report, 'get_weekend_history', return_value=history), \
+                patch.object(report, 'get_latest_learning_opportunities', return_value=[old_opportunity]):
+            html = report.build_html_report(date(2026, 10, 13), rows, pairs=[pair, removed])
+        self.assertIn('-10 €', html)
+        self.assertNotIn('+150 €', html)
+        self.assertNotIn('23 oct.', html)
+        self.assertNotIn('Precios a más largo plazo', html)
+
     def test_no_buy_signal_for_single_observation(self):
         self.assertEqual(report._trend_label(142, 142, 1), 'Histórico insuficiente')
         self.assertEqual(report._trend_label(142, 142, 5), 'Cerca del mínimo observado')
@@ -171,7 +219,8 @@ class HolidayTests(unittest.TestCase):
         self.assertIn(date(2027, 5, 3), HOLIDAYS)
 
     def test_holiday_and_extended_return_times(self):
-        self.assertTrue(scraper._departure_ok(date(2027, 3, 29), '9:00 AM', 'inbound'))
+        self.assertTrue(scraper._departure_ok(date(2027, 3, 29), '8:00 AM', 'inbound'))
+        self.assertFalse(scraper._departure_ok(date(2027, 3, 29), '9:00 AM', 'inbound'))
         self.assertTrue(scraper._departure_ok(date(2027, 3, 30), '9:00 AM', 'inbound'))
         self.assertFalse(scraper._departure_ok(date(2027, 3, 25), '9:00 AM', 'outbound'))
 

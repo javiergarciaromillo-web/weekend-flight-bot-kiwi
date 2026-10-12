@@ -4,13 +4,23 @@ from datetime import date, timedelta
 from typing import List, Tuple
 
 
+def allowed_pair(outbound: date, inbound: date) -> bool:
+    """Exclude Friday–Sunday weekends; retain longer holiday stays."""
+    return not (outbound.weekday() == 4 and inbound.weekday() == 6
+                and (inbound - outbound).days == 2)
+
+
+# Earlier prices used different departure windows and are not comparable.
+FILTER_HISTORY_START = date(2026, 10, 12)
+
+
 def generate_weekend_pairs(
     start_date: date,
     weeks: int,
     skip_weeks: int = 0,
 ) -> List[Tuple[date, date]]:
     """
-    Generate Thu/Fri outbound with Sun/Mon inbound pairs.
+    Generate Thu–Sun, Thu–Mon and Fri–Mon pairs.
 
     Example:
     - weeks=7
@@ -35,7 +45,8 @@ def generate_weekend_pairs(
         sunday = d + timedelta(days=(6 - d.weekday()))
         monday = sunday + timedelta(days=1)
 
-        pairs.append((d, sunday))
+        if d.weekday() == 3:
+            pairs.append((d, sunday))
         pairs.append((d, monday))
 
     # remove duplicates while preserving order

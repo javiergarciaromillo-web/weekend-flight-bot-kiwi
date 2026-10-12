@@ -9,6 +9,7 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 
 
 from src.holidays import HOLIDAYS, holiday_dates, is_free_day
+from src.planner import allowed_pair
 
 DEBUG_DIR = Path("debug")
 
@@ -88,22 +89,27 @@ def _parse_time_to_24h(value: str) -> datetime.time | None:
 def _departure_ok(leg_date: date, departure_time: str, leg_type: str | None = None) -> bool:
     """
     Rules:
-    - Thursday outbound -> from 16:00
+    - Thursday outbound -> from 17:00
     - Friday outbound -> whole day
     - Sunday inbound -> from 16:00
-    - Monday inbound -> whole day
+    - Monday inbound -> departure up to 08:00 inclusive or from 17:00
     """
     weekday = leg_date.weekday()
+    dep = _parse_time_to_24h(departure_time)
+    if dep is None:
+        return False
+    # Explicit weekly constraints also apply on a published holiday.
+    if weekday == 3 and leg_type == 'outbound':
+        return dep >= datetime.strptime('17:00', '%H:%M').time()
+    if weekday == 0 and leg_type == 'inbound':
+        return (dep <= datetime.strptime('08:00', '%H:%M').time()
+                or dep >= datetime.strptime('17:00', '%H:%M').time())
 
     if leg_type == "inbound" and weekday < 5:
         return _parse_time_to_24h(departure_time) is not None
 
     if leg_date in HOLIDAYS or weekday in (4, 0):  # Published holiday, Friday or Monday
         return True
-
-    dep = _parse_time_to_24h(departure_time)
-    if dep is None:
-        return False
 
     threshold = datetime.strptime("16:00", "%H:%M").time()
     return dep >= threshold
@@ -288,7 +294,7 @@ def _filter_relevant_flights(
     leg_date: date,
     origin: str,
     destination: str,
-    allow_klm_from_ams: bool = False,
+    allow_klm_from_ams: bool = True,
 ) -> list[dict]:
     filtered: list[dict] = []
 
@@ -379,7 +385,7 @@ def _run_one_leg_search(
     leg_date: date,
     weekend_outbound: date,
     weekend_inbound: date,
-    allow_klm_from_ams: bool = False,
+    allow_klm_from_ams: bool = True,
 ) -> list[dict]:
     label = (
         f"{origin}_{destination}_{leg_date.isoformat()}_"
@@ -461,17 +467,20 @@ def _run_one_leg_search(
 
 def _bind_leg(rows, outbound, inbound):
     """Apply trip-specific constraints to a verified route/date observation."""
+    if not allowed_pair(outbound, inbound):
+        return []
     return [dict(row, outbound=outbound, inbound=inbound) for row in rows
-            if not (row['destination'] == 'BCN'
+            if _departure_ok(row['leg_date'], row['outbound_departure'], row['leg_type'])
+            and not (row['destination'] == 'BCN'
                     and holiday_dates(outbound, inbound)
                     and not is_free_day(row['leg_date'])
                     and (_parse_time_to_24h(row['outbound_departure']) is None
                          or _parse_time_to_24h(row['outbound_departure'])
-                         < datetime.strptime('16:00', '%H:%M').time()))]
+                         < datetime.strptime('17:00', '%H:%M').time()))]
 
 
 def recover_failed_queries(pairs, rows, diagnostics, later_rows, later_diagnostics):
-    """Reuse successful learning queries without admitting learning-only airlines."""
+    """Reuse successful learning queries while retaining route/airline filters."""
     recovered = {key for key, status in diagnostics.items()
                  if status == 'failed' and later_diagnostics.get(key) in {'ok', 'filtered_empty'}}
     if not recovered:
@@ -480,7 +489,10 @@ def recover_failed_queries(pairs, rows, diagnostics, later_rows, later_diagnosti
     candidates = {}
     for row in later_rows:
         key = (row['origin'], row['destination'], row['leg_date'])
-        if key in recovered and row['airline'].lower() in {'vueling', 'transavia'}:
+        airline = row['airline'].lower()
+        airline_ok = (airline in {'vueling', 'transavia'}
+                      or (airline == 'klm' and 'AMS' in key[:2]))
+        if key in recovered and airline_ok:
             identity = (row['airline'], row['outbound_departure'], row['outbound_arrival'], row['price'])
             candidates.setdefault(key, {})[identity] = row
     result = list(rows)
@@ -496,9 +508,10 @@ def recover_failed_queries(pairs, rows, diagnostics, later_rows, later_diagnosti
 
 def search_google_flights(
     pairs: List[Tuple[date, date]],
-    allow_klm_from_ams: bool = False,
+    allow_klm_from_ams: bool = True,
     diagnostics: dict | None = None,
 ) -> list[dict]:
+    pairs = [pair for pair in pairs if allowed_pair(*pair)]
     DEBUG_DIR.mkdir(parents=True, exist_ok=True)
 
     results: list[dict] = []

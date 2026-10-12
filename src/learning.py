@@ -25,7 +25,6 @@ def _build_pairs_for_offset(run_date: date, offset: int):
     return [
         ("THU-SUN", thu, thu + timedelta(days=3)),
         ("THU-MON", thu, thu + timedelta(days=4)),
-        ("FRI-SUN", fri, fri + timedelta(days=2)),
         ("FRI-MON", fri, fri + timedelta(days=3)),
     ]
 

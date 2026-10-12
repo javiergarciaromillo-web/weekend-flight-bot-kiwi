@@ -3,6 +3,7 @@
 No public-holiday inference: only published NCIA dates are treated as holidays.
 """
 from datetime import date, timedelta
+from src.planner import allowed_pair
 
 HOLIDAYS = {
     date(2026, 1, 1), date(2026, 1, 2), date(2026, 4, 3), date(2026, 4, 6),
@@ -23,7 +24,7 @@ def is_free_day(day):
 def workdays_affected(outbound, inbound):
     """Dates requiring an absence arrangement after evening departure.
 
-Departure on a working day assumes work before a >=16:00 flight. Return on a
+Departure on a working day assumes work before a >=17:00 flight. Return on a
 working day is conservatively counted; this is not an approved leave balance.
 """
     return sum(not is_free_day(outbound + timedelta(days=i))
@@ -69,4 +70,4 @@ later. Retain one longest option per workday cost per distinct free block.
                 if old is None or (inbound-outbound).days > (old[1]-old[0]).days:
                     choices[cost] = pair
         pairs.update(choices.values())
-    return sorted(pairs)
+    return sorted(pair for pair in pairs if allowed_pair(*pair))
