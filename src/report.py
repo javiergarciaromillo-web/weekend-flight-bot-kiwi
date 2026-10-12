@@ -6,6 +6,7 @@ from html import escape
 from src.store import get_weekend_history, get_latest_learning_opportunities
 from src.holidays import holiday_dates, workdays_affected
 from src.budget import REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, estimate_allocation
+from src.planner import allowed_pair, FILTER_HISTORY_START
 
 
 WEEKDAYS = ['lun.', 'mar.', 'mié.', 'jue.', 'vie.', 'sáb.', 'dom.']
@@ -69,7 +70,8 @@ def _leg(rows, diagnostics, leg_date, outbound):
 
 def build_html_report(run_date, rows, pairs=None, diagnostics=None):
     diagnostics = diagnostics or {}
-    pairs = sorted(set(pairs or [(r['outbound'], r['inbound']) for r in rows]))
+    pairs = sorted(pair for pair in set(pairs or [(r['outbound'], r['inbound']) for r in rows])
+                   if allowed_pair(*pair))
     trips = []
     for outbound, inbound in pairs:
         selected = [r for r in rows if (r['outbound'], r['inbound']) == (outbound, inbound)]
@@ -78,7 +80,8 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None):
         total = min(r['price'] for r in out) + min(r['price'] for r in inc) if out and inc else None
         # One observation per run date; exclude future records and incomplete totals.
         history = {h['run_date']: h for h in get_weekend_history(outbound, inbound)
-                   if h['run_date'] <= str(run_date) and h['best_combo'] is not None}
+                   if str(FILTER_HISTORY_START) <= h['run_date'] <= str(run_date)
+                   and h['best_combo'] is not None}
         valid = sorted(history.values(), key=lambda h: h['run_date'])
         previous = [h for h in valid if h['run_date'] < str(run_date)]
         minimum = min((h['best_combo'] for h in valid), default=None)
@@ -213,8 +216,9 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None):
                      f'{workdays_affected(t["outbound"], t["inbound"])} laborables, {_price(t["total"])}.</p>')
         html += table(bridges)
 
-    opportunities = [o for o in get_latest_learning_opportunities(limit=10)
-                     if o['run_date'] == str(run_date) and o['outbound'] >= str(run_date)][:3]
+    opportunities = [o for o in get_latest_learning_opportunities(limit=100)
+                     if o['run_date'] == str(run_date) and o['outbound'] >= str(run_date)
+                     and allowed_pair(date.fromisoformat(o['outbound']), date.fromisoformat(o['inbound']))][:3]
     if opportunities:
         html += '<h2 style="font-size:18px;margin-top:24px">Precios a más largo plazo</h2>'
         for item in opportunities:
@@ -238,8 +242,12 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None):
              'Los enlaces en cada precio abren la búsqueda: confirmar tarifa y equipaje. '
              'Cambio de precio = comparación con la última observación anterior. '
              'El mínimo solo se muestra a partir de 5 días con precio completo.<br>'
-             'Vuelos directos de Vueling y Transavia; KLM también en el muestreo a largo plazo vía AMS. '
-             'Jueves y domingo desde las 16:00; viernes y lunes todo el día; horarios ampliados en festivos y estancias largas.<br>'
+             'Vuelos directos de Vueling y Transavia; KLM también en las opciones habituales vía AMS. '
+             'Escapadas: jueves–domingo, jueves–lunes o viernes–lunes. '
+             'Ida del jueves desde las 17:00; viernes todo el día. '
+             'Vuelta del domingo desde las 16:00; lunes hasta las 08:00 o desde las 17:00 (hora de salida). '
+             'Se mantienen las estancias ampliadas por festivos; las ventanas de jueves y lunes también se respetan en festivos.<br>'
+             'Histórico comparable desde el 12 de octubre de 2026, con estos filtros.<br>'
              f'<b>Cupos 2027:</b> {REMOTE_WORK_DAYS} días de teletrabajo (TT) desde España y '
              f'{ANNUAL_LEAVE_DAYS} de vacaciones; arrastre pendiente de cuantificar. '
              'Los repartos por viaje son alternativas, no consumen saldo. '
