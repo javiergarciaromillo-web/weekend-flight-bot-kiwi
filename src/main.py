@@ -11,6 +11,7 @@ from src.scrapers.google_flights_ui import search_google_flights, recover_failed
 from src.report import build_html_report
 from src.emailer import send_email_html
 from src.store import init_db, save_weekend_snapshot, get_latest_learning_opportunities
+from src.store import save_flight_observations, record_booking_decisions
 from src.learning import run_learning_sampling
 
 
@@ -63,18 +64,23 @@ def main() -> None:
             best_combo=best_combo,
         )
 
+    all_diagnostics = {**learning_diagnostics, **diagnostics}
+    save_flight_observations(run_date, learning_rows + rows, all_diagnostics)
+    decisions = record_booking_decisions(run_date, rows, pairs, diagnostics)
+
     print("[INFO] Building report...")
-    html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics)
+    html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics, decisions=decisions)
 
     # Retain the exact report and source observations for review from this chat.
     report_dir = Path('data/report')
     report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / 'report.html').write_text(html, encoding='utf-8')
     (report_dir / 'report.json').write_text(json.dumps({
-        'schema_version': 1,
+        'schema_version': 2,
         'run_date': run_date,
         'pairs': pairs,
         'flights': rows,
+        'decisions': [dict(outbound=o, inbound=i, **d) for (o, i), d in decisions.items()],
         'queries': [dict(origin=o, destination=d, date=day, status=status)
                     for (o, d, day), status in diagnostics.items()],
         'learning': [o for o in get_latest_learning_opportunities(limit=100)
