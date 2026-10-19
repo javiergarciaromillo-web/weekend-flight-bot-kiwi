@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from html import escape
 
+from src.family import build_coverage, join_opportunities, render_coverage
 from src.store import get_weekend_history, get_latest_learning_opportunities
 from src.holidays import holiday_dates, workdays_affected
 from src.budget import REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, estimate_allocation
@@ -68,7 +69,7 @@ def _leg(rows, diagnostics, leg_date, outbound):
     return 'Sin resultados verificados'
 
 
-def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=None):
+def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=None, family_plan=None):
     diagnostics = diagnostics or {}
     decisions = decisions or {}
     pairs = sorted(pair for pair in set(pairs or [(r['outbound'], r['inbound']) for r in rows])
@@ -146,6 +147,8 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                     f"{year}: {a['remote']} TT / {a['leave']} vac."
                     for year, a in allocation.items())
             decision = decisions.get((t['outbound'], t['inbound']))
+            if any(w['state'] in ('booked', 'covered', 'skipped', 'outside') and t['outbound'] <= w['weekend'] < t['inbound'] for w in coverage):
+                decision = None
             if decision:
                 meta += (f'<br><b>{escape(decision["action"])}</b>'
                          f'<br>Revisar: {escape(decision["review_on"])}'
@@ -187,32 +190,16 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
             '<h1 style="font-size:23px;margin:0">Tus vuelos a Barcelona</h1>'
             f'<p style="color:#64748b;margin:4px 0 18px">{_fmt_day(run_date)} · '
             f'{len(complete)}/{len(trips)} viajes con precio completo</p>'
-            f'<h2 style="font-size:18px">{"Qué revisar primero" if decisions else "Las tres opciones más económicas"}</h2>')
+            '')
+    coverage = build_coverage(trips, decisions, family_plan)
+    html += render_coverage(coverage, join_opportunities(coverage, trips))
     if decisions:
         html += ('<p style="padding:10px;background:#fff7ed"><b>Cuándo comprar</b><br>'
                  'Reglas iniciales de prudencia, todavía sin una ventana óptima aprendida: '
-                 'cerrar la decisión 21 días antes de una escapada o 42 días antes si incluye festivos NCIA. '
-                 'Revisar como máximo cada 3 días. Comprar solo si el viaje y el precio te encajan. '
+                 '21/42 días (normal/festivos) son topes provisionales para dejar de esperar, no fechas óptimas de compra. '
+                 'Revisar como máximo cada 3 días. Cada fin de semana necesario debe quedar cubierto; si está caro, comparar horarios y aeropuertos dentro de esa semana. '
                  'El histórico compara la combinación más barata aceptable, que puede cambiar de vuelo. '
                  'Tarifas sin coste de traslados ni equipaje adicional.</p>')
-    priority = {'CERRAR DECISIÓN': 0, 'CONSIDERAR COMPRA': 1, 'VERIFICAR': 2,
-                'ESPERAR CON LÍMITE': 3, 'OBSERVAR': 4, 'REVISAR': 5}
-    highlighted = sorted(complete, key=lambda t: (
-        priority.get(decisions.get((t['outbound'], t['inbound']), {}).get('action'), 6),
-        decisions.get((t['outbound'], t['inbound']), {}).get('deadline', str(t['outbound'])),
-        workdays_affected(t['outbound'], t['inbound']), t['total'])) if decisions else complete
-    for index, t in enumerate(highlighted[:3], 1):
-        out = min(t['out'], key=lambda r: r['price'])
-        inc = min(t['inc'], key=lambda r: r['price'])
-        decision = decisions.get((t['outbound'], t['inbound']))
-        change = f" · {t['delta']:+.0f} € frente a la última consulta" if t['delta'] is not None else ''
-        html += (f'<div style="padding:10px 12px;margin:8px 0;background:#eff6ff;border-left:3px solid #2563eb">'
-                 f'<b>{index}. {date_range(t)} · {_price(t["total"])}</b><br>'
-                 f'<span style="font-size:12px">{(t["inbound"]-t["outbound"]).days} noches · '
-                 f'salida {escape(out["origin"])} / regreso {escape(inc["destination"])}{change}</span>'
-                 + (f'<br><b>{escape(decision["action"])}</b> · revisar {escape(decision["review_on"])}'
-                    f' · límite {escape(decision["deadline"])}' if decision else '')
-                 + '</div>')
     if not complete:
         html += '<p>Sin combinaciones completas verificadas.</p>'
     drops = sorted([t for t in complete if t['delta'] is not None and t['delta'] <= -20], key=lambda t: t['delta'])
@@ -226,9 +213,9 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                  'Los precios completos pueden existir por otro aeropuerto; no garantizan la opción más barata.</p>')
 
     bridges = [t for t in trips if holiday_dates(t['outbound'], t['inbound'])]
-    ordinary = [t for t in trips if not holiday_dates(t['outbound'], t['inbound'])]
+    ordinary = [t for t in trips if (t['inbound']-t['outbound']).days <= 4 and not holiday_dates(t['outbound'], t['inbound'])]
     if ordinary:
-        html += '<h2 style="font-size:18px;margin-top:24px">Escapadas próximas</h2>' + table(ordinary)
+        html += '<h2 style="font-size:18px;margin-top:24px">Opciones para cubrir tus fines de semana</h2>' + table(ordinary)
     if bridges:
         ranked = sorted([t for t in bridges if t['total'] is not None], key=lambda t: (
             workdays_affected(t['outbound'], t['inbound']), -(t['inbound']-t['outbound']).days, t['total']))
@@ -267,7 +254,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
              'Cambio de precio = comparación con la última observación anterior. '
              'El mínimo solo se muestra a partir de 5 días con precio completo.<br>'
              'Vuelos directos de Vueling y Transavia; KLM también en las opciones habituales vía AMS. '
-             'Escapadas: jueves–domingo, jueves–lunes o viernes–lunes. '
+             'Viajes semanales: jueves–domingo, jueves–lunes o viernes–lunes. '
              'Ida del jueves desde las 17:00; viernes todo el día. '
              'Vuelta del domingo desde las 16:00; lunes hasta las 08:00 o desde las 17:00 (hora de salida). '
              'Se mantienen las estancias ampliadas por festivos; las ventanas de jueves y lunes también se respetan en festivos.<br>'
