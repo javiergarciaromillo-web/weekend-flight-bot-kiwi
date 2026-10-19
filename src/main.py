@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,6 +12,7 @@ from src.report import build_html_report
 from src.emailer import send_email_html
 from src.store import init_db, save_weekend_snapshot, get_latest_learning_opportunities
 from src.store import save_flight_observations, record_booking_decisions
+from src.family import joined_pairs, load_plan
 from src.learning import run_learning_sampling
 
 
@@ -19,15 +20,19 @@ def main() -> None:
     run_date = datetime.now(ZoneInfo("Europe/Amsterdam")).date()
 
     init_db()
+    family_plan = load_plan()
+
+    # Search the family period even before it enters the usual seven-week horizon.
+    planning_start = max(run_date, date.fromisoformat(family_plan['required_from'])) if family_plan.get('required_from') else run_date
 
     print("[INFO] Generating weekend pairs...")
     pairs = generate_weekend_pairs(
-        start_date=run_date,
+        start_date=planning_start,
         weeks=7,
-        skip_weeks=1,
+        skip_weeks=0,
     )
 
-    pairs = sorted(set(pairs + generate_holiday_pairs(run_date)))
+    pairs = sorted(set(pairs + joined_pairs(pairs) + generate_holiday_pairs(planning_start, horizon_days=max(0, 180-(planning_start-run_date).days))))
 
     print("[INFO] Scraping operational flights...")
     diagnostics = {}
@@ -69,16 +74,17 @@ def main() -> None:
     decisions = record_booking_decisions(run_date, rows, pairs, diagnostics)
 
     print("[INFO] Building report...")
-    html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics, decisions=decisions)
+    html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics, decisions=decisions, family_plan=family_plan)
 
     # Retain the exact report and source observations for review from this chat.
     report_dir = Path('data/report')
     report_dir.mkdir(parents=True, exist_ok=True)
     (report_dir / 'report.html').write_text(html, encoding='utf-8')
     (report_dir / 'report.json').write_text(json.dumps({
-        'schema_version': 2,
+        'schema_version': 3,
         'run_date': run_date,
         'pairs': pairs,
+        'family_plan': family_plan,
         'flights': rows,
         'decisions': [dict(outbound=o, inbound=i, **d) for (o, i), d in decisions.items()],
         'queries': [dict(origin=o, destination=d, date=day, status=status)
