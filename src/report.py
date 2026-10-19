@@ -68,8 +68,9 @@ def _leg(rows, diagnostics, leg_date, outbound):
     return 'Sin resultados verificados'
 
 
-def build_html_report(run_date, rows, pairs=None, diagnostics=None):
+def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=None):
     diagnostics = diagnostics or {}
+    decisions = decisions or {}
     pairs = sorted(pair for pair in set(pairs or [(r['outbound'], r['inbound']) for r in rows])
                    if allowed_pair(*pair))
     trips = []
@@ -144,6 +145,12 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None):
                 meta += '<br>' + '; '.join(
                     f"{year}: {a['remote']} TT / {a['leave']} vac."
                     for year, a in allocation.items())
+            decision = decisions.get((t['outbound'], t['inbound']))
+            if decision:
+                meta += (f'<br><b>{escape(decision["action"])}</b>'
+                         f'<br>Revisar: {escape(decision["review_on"])}'
+                         f'<br>Límite: {escape(decision["deadline"])}'
+                         f'<br>{escape(decision["reason"])}')
             total = _price(t['total'])
             if t['total'] is None:
                 total += '<br><small>Incompleto</small>'
@@ -180,15 +187,32 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None):
             '<h1 style="font-size:23px;margin:0">Tus vuelos a Barcelona</h1>'
             f'<p style="color:#64748b;margin:4px 0 18px">{_fmt_day(run_date)} · '
             f'{len(complete)}/{len(trips)} viajes con precio completo</p>'
-            '<h2 style="font-size:18px">Las tres opciones más económicas</h2>')
-    for index, t in enumerate(complete[:3], 1):
+            f'<h2 style="font-size:18px">{"Qué revisar primero" if decisions else "Las tres opciones más económicas"}</h2>')
+    if decisions:
+        html += ('<p style="padding:10px;background:#fff7ed"><b>Cuándo comprar</b><br>'
+                 'Reglas iniciales de prudencia, todavía sin una ventana óptima aprendida: '
+                 'cerrar la decisión 21 días antes de una escapada o 42 días antes si incluye festivos NCIA. '
+                 'Revisar como máximo cada 3 días. Comprar solo si el viaje y el precio te encajan. '
+                 'El histórico compara la combinación más barata aceptable, que puede cambiar de vuelo. '
+                 'Tarifas sin coste de traslados ni equipaje adicional.</p>')
+    priority = {'CERRAR DECISIÓN': 0, 'CONSIDERAR COMPRA': 1, 'VERIFICAR': 2,
+                'ESPERAR CON LÍMITE': 3, 'OBSERVAR': 4, 'REVISAR': 5}
+    highlighted = sorted(complete, key=lambda t: (
+        priority.get(decisions.get((t['outbound'], t['inbound']), {}).get('action'), 6),
+        decisions.get((t['outbound'], t['inbound']), {}).get('deadline', str(t['outbound'])),
+        workdays_affected(t['outbound'], t['inbound']), t['total'])) if decisions else complete
+    for index, t in enumerate(highlighted[:3], 1):
         out = min(t['out'], key=lambda r: r['price'])
         inc = min(t['inc'], key=lambda r: r['price'])
+        decision = decisions.get((t['outbound'], t['inbound']))
         change = f" · {t['delta']:+.0f} € frente a la última consulta" if t['delta'] is not None else ''
         html += (f'<div style="padding:10px 12px;margin:8px 0;background:#eff6ff;border-left:3px solid #2563eb">'
                  f'<b>{index}. {date_range(t)} · {_price(t["total"])}</b><br>'
                  f'<span style="font-size:12px">{(t["inbound"]-t["outbound"]).days} noches · '
-                 f'salida {escape(out["origin"])} / regreso {escape(inc["destination"])}{change}</span></div>')
+                 f'salida {escape(out["origin"])} / regreso {escape(inc["destination"])}{change}</span>'
+                 + (f'<br><b>{escape(decision["action"])}</b> · revisar {escape(decision["review_on"])}'
+                    f' · límite {escape(decision["deadline"])}' if decision else '')
+                 + '</div>')
     if not complete:
         html += '<p>Sin combinaciones completas verificadas.</p>'
     drops = sorted([t for t in complete if t['delta'] is not None and t['delta'] <= -20], key=lambda t: t['delta'])
