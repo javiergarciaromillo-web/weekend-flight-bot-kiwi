@@ -274,6 +274,8 @@ class StoreTests(unittest.TestCase):
             diagnostics[key] = 'ok'
             return [out]
         with tempfile.TemporaryDirectory() as folder, patch.object(app, 'init_db'), \
+                patch.object(app, 'save_flight_observations'), \
+                patch.object(app, 'record_booking_decisions', return_value={}), \
                 patch.object(app, 'generate_weekend_pairs', return_value=[pair]), \
                 patch.object(app, 'generate_holiday_pairs', return_value=[]), \
                 patch.object(app, 'search_google_flights', side_effect=operational), \
