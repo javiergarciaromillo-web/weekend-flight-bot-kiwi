@@ -50,3 +50,101 @@ El informe destaca noches en España, festivos y días laborables afectados. Est
 Se consideran 46 días de teletrabajo desde España y 30 días de vacaciones por año. El reparto orientativo prioriza teletrabajo y separa años naturales; no afirma que el saldo esté disponible. El consumo real y las reservas aún no están registrados. `estimate_allocation` acepta saldos restantes por año para calcular necesidades sin cubrir. Las alternativas de viaje se muestran individualmente y no constituyen un plan anual acumulado ni descuentan días automáticamente.
 
 El usuario confirma los cupos completos para 2027: 46 días de teletrabajo y 30 de vacaciones. Los días adicionales arrastrados desde 2026 están pendientes de cuantificar y no se incluyen. El saldo de 2026 continúa sin verificar.
+
+## Weekly family travel: preparation phase
+
+The objective is to cover each necessary weekend with family in Spain, not select occasional cheap trips. The report records a daily decision for each date alternative and presents a chronological weekend coverage view. It retains the
+existing NCIA holidays, 46 TT / 30 leave allowance for 2027, unknown 2026 balance,
+and all existing flight filters. No booking is automatic.
+
+Initial **risk rules**, not learned optimum booking windows:
+
+- Review within three days, never after the decision deadline.
+- Close the decision 21 days before ordinary weekly travel, 42 before trips containing an
+  NCIA holiday. At that point choose an acceptable fare or change the trip; this
+  does not imply that any current fare is good.
+- Consider buying early only after seven distinct prior days with complete
+  comparable coverage, when the current basket costs at least €20 and 8% less
+  than its historical median. These thresholds are policy choices.
+- Incomplete/failed searches require verification and cannot generate a buy
+  signal. Historical savings compare the cheapest eligible **basket**, whose
+  flights can change. No probability of future savings is claimed.
+
+`BookingPolicy` in `src/decisions.py` makes these provisional settings explicit.
+The full report still presents vacation/TT usage separately so a low fare does
+not hide workday costs. Transport and baggage costs are not yet available and
+are **not** included in the fare or replaced with invented estimates.
+
+### Evidence collected from activation onward
+
+Additive SQLite tables retain all returned eligible flight observations (both
+operational and long-range), query outcomes and decisions with filter/policy
+versions. Repeated legs across trip combinations count once per day. Same-day
+reruns replace queried scopes. This is a daily snapshot, not an intraday series.
+The existing cheapest-price tables remain intact.
+
+Flight identity currently uses airline, route, departure date and normalized
+scheduled departure/arrival times: the scraper returns `N/A` for flight numbers.
+Schedule changes split these proxy identities. A missing flight in a failed
+search is not evidence of being sold out. Legacy data cannot reconstruct all
+individual flights; comparable basket history starts 12 October 2026 but the
+new coverage-verified decision series starts only on activation.
+
+### Validation before learned recommendations
+
+Run `python -m src.evaluate_decisions data/prices.db` for read-only walk-forward
+policy evaluation. Decisions receive only strictly earlier complete observations.
+Only trajectories with at least seven days and an observation within seven days
+before departure are included. Output reports chosen date, observed later regret
+and difference from the last observed fare; it is not an optimum or success rate.
+No evaluation is claimed until production data is available and trips mature.
+
+Next modelling stages require: continuous cohorts from first search through
+purchase cutoff; explicit fare/baggage comparability; enough **distinct departed
+flights**, segmented by season, direction, carrier and weekday; then rolling
+held-out evaluation against fixed 21/42-day and buy-first-seen baselines. Report
+coverage and sample size, avoid treating overlapping alternatives as independent,
+and enable finer airline/flight predictions only when evidence improves on the
+simple baseline. Do not substitute US-wide purchase-window averages for NL–BCN.
+
+This branch prepares the feature. Merging enables recording and the new report
+on the existing scheduled run; no additional run or email is needed for testing.
+
+
+### Weekly coverage and longer stays
+
+The seven-week operational horizon begins at the later of today and the confirmed
+family start date (no skipped first week). Thus February is searched now, rather
+than waiting until it falls within seven weeks.
+Each Saturday groups Thursday–Sunday, Thursday–Monday and Friday–Monday choices;
+missing or expensive weeks remain visible instead of being replaced by cheaper
+weeks. The seven-week operational horizon is distinct from longer-range sampled
+prices and holiday searches; unsampled weeks beyond it have no coverage claim.
+
+`config/family_plan.json` records an optional `required_from`/`required_until`
+period and a `weekends` mapping of Saturday ISO date to `pending`, `booked`,
+`covered`, `skipped`, or `unknown`. The family routine starts on **1 February 2027**, confirmed by the user; the first
+weekend to cover is **6–7 February**. Purchased flights and deliberate exceptions
+have not been confirmed. Unknown is never
+silently treated as unbooked. Outside-period, purchased, already covered and
+skipped weeks receive no new purchase instruction. This is explicit state input,
+not automatic Gmail booking reconciliation; no reservation identifiers needed.
+
+For adjacent weekends, query the combined outward/return date alternatives too.
+These use existing leg dates and the scraper's per-leg query reuse, with normal
+time/airline filters. Compare a continuous stay against the cheapest separate
+trip for each weekend. Show fare saving, two avoided legs, additional workdays
+and annual TT/leave allocation. Suggestions require approval of presence and
+remote-work/leave arrangements. They do not consume balances or presume existing
+tickets can be refunded. Overlapping suggestions are alternatives, not additive.
+
+Monthly totals group Saturdays and sum the cheapest separate trips for pending
+or unverified weeks only, with priced/total counts. They are neither spending
+records nor full trip cost: purchased trips, extras and ground transfers are
+excluded. Weekly detail retains airline/airport/timetable choices. Labour-day
+estimates assume work before departure and conservatively count working return
+days; early Friday flights may require another day.
+
+The 21/42-day rules remain explicitly provisional **stop-waiting limits**, not a
+recommendation to wait until those dates. Validate and replace them using weekly
+coverage outcomes; airline/flight-specific learned timing remains future work.
