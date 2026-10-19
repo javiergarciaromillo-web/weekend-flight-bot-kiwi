@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from statistics import median
 
-POLICY_VERSION = '2026-10-19-v1'
+POLICY_VERSION = '2026-10-19-family-v2'
 FILTER_VERSION = '2026-10-12'
 
 
@@ -42,8 +42,8 @@ def recommend(run_date, outbound, price, history, *, holiday=False,
         action, reason = 'VERIFICAR', 'Cobertura incompleta: verificar precios antes de decidir.'
         result['review_on'] = str(run_date)
     elif run_date >= deadline:
-        action, reason = 'CERRAR DECISIÓN', ('Límite prudente alcanzado: si vas a viajar, reservar una opción '
-                                            'aceptable o cambiar fechas; no seguir esperando una bajada.')
+        action, reason = 'CERRAR DECISIÓN', ('Límite prudente alcanzado para cubrir esta semana: reservar una opción '
+                                            'aceptable dentro del mismo fin de semana; no seguir esperando una bajada.')
     elif len(prior) >= policy.min_history_days:
         baseline = median(prior.values())
         saving = baseline - price
