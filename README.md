@@ -50,3 +50,62 @@ El informe destaca noches en España, festivos y días laborables afectados. Est
 Se consideran 46 días de teletrabajo desde España y 30 días de vacaciones por año. El reparto orientativo prioriza teletrabajo y separa años naturales; no afirma que el saldo esté disponible. El consumo real y las reservas aún no están registrados. `estimate_allocation` acepta saldos restantes por año para calcular necesidades sin cubrir. Las alternativas de viaje se muestran individualmente y no constituyen un plan anual acumulado ni descuentan días automáticamente.
 
 El usuario confirma los cupos completos para 2027: 46 días de teletrabajo y 30 de vacaciones. Los días adicionales arrastrados desde 2026 están pendientes de cuantificar y no se incluyen. El saldo de 2026 continúa sin verificar.
+
+## Booking decisions: preparation phase
+
+The report now records a daily decision for each operational trip. It retains the
+existing NCIA holidays, 46 TT / 30 leave allowance for 2027, unknown 2026 balance,
+and all existing flight filters. No booking is automatic.
+
+Initial **risk rules**, not learned optimum booking windows:
+
+- Review within three days, never after the decision deadline.
+- Close the decision 21 days before ordinary trips, 42 before trips containing an
+  NCIA holiday. At that point choose an acceptable fare or change the trip; this
+  does not imply that any current fare is good.
+- Consider buying early only after seven distinct prior days with complete
+  comparable coverage, when the current basket costs at least €20 and 8% less
+  than its historical median. These thresholds are policy choices.
+- Incomplete/failed searches require verification and cannot generate a buy
+  signal. Historical savings compare the cheapest eligible **basket**, whose
+  flights can change. No probability of future savings is claimed.
+
+`BookingPolicy` in `src/decisions.py` makes these provisional settings explicit.
+The full report still presents vacation/TT usage separately so a low fare does
+not hide workday costs. Transport and baggage costs are not yet available and
+are **not** included in the fare or replaced with invented estimates.
+
+### Evidence collected from activation onward
+
+Additive SQLite tables retain all returned eligible flight observations (both
+operational and long-range), query outcomes and decisions with filter/policy
+versions. Repeated legs across trip combinations count once per day. Same-day
+reruns replace queried scopes. This is a daily snapshot, not an intraday series.
+The existing cheapest-price tables remain intact.
+
+Flight identity currently uses airline, route, departure date and normalized
+scheduled departure/arrival times: the scraper returns `N/A` for flight numbers.
+Schedule changes split these proxy identities. A missing flight in a failed
+search is not evidence of being sold out. Legacy data cannot reconstruct all
+individual flights; comparable basket history starts 12 October 2026 but the
+new coverage-verified decision series starts only on activation.
+
+### Validation before learned recommendations
+
+Run `python -m src.evaluate_decisions data/prices.db` for read-only walk-forward
+policy evaluation. Decisions receive only strictly earlier complete observations.
+Only trajectories with at least seven days and an observation within seven days
+before departure are included. Output reports chosen date, observed later regret
+and difference from the last observed fare; it is not an optimum or success rate.
+No evaluation is claimed until production data is available and trips mature.
+
+Next modelling stages require: continuous cohorts from first search through
+purchase cutoff; explicit fare/baggage comparability; enough **distinct departed
+flights**, segmented by season, direction, carrier and weekday; then rolling
+held-out evaluation against fixed 21/42-day and buy-first-seen baselines. Report
+coverage and sample size, avoid treating overlapping alternatives as independent,
+and enable finer airline/flight predictions only when evidence improves on the
+simple baseline. Do not substitute US-wide purchase-window averages for NL–BCN.
+
+This branch prepares the feature. Merging enables recording and the new report
+on the existing scheduled run; no additional run or email is needed for testing.
