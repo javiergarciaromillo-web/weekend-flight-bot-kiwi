@@ -73,6 +73,7 @@ def init_db():
 
     conn.commit()
     conn.close()
+    init_decision_tables()
 
 
 def save_weekend_snapshot(
@@ -324,3 +325,94 @@ def get_learning_stats(days_to_departure: int, pattern: str):
         "avg_combo": sum(rows) / len(rows),
         "min_combo": min(rows),
     }
+
+
+# Detailed observations are separate from legacy cheapest-combination history.
+# Identity is a timetable proxy: the provider currently returns no flight number.
+def init_decision_tables():
+    with get_conn() as conn:
+        conn.executescript('''
+        CREATE TABLE IF NOT EXISTS flight_observations (
+            run_date TEXT, filter_version TEXT, leg_date TEXT, origin TEXT,
+            destination TEXT, airline TEXT, departure TEXT, arrival TEXT,
+            price REAL, source_url TEXT,
+            PRIMARY KEY (run_date, filter_version, leg_date, origin, destination,
+                         airline, departure, arrival)
+        );
+        CREATE TABLE IF NOT EXISTS query_observations (
+            run_date TEXT, filter_version TEXT, leg_date TEXT, origin TEXT,
+            destination TEXT, status TEXT,
+            PRIMARY KEY (run_date, filter_version, leg_date, origin, destination)
+        );
+        CREATE TABLE IF NOT EXISTS booking_decisions (
+            run_date TEXT, filter_version TEXT, outbound TEXT, inbound TEXT,
+            price REAL, coverage_complete INTEGER, holiday INTEGER, decision_json TEXT,
+            PRIMARY KEY (run_date, filter_version, outbound, inbound)
+        );
+        ''')
+
+
+def save_flight_observations(run_date, rows, diagnostics):
+    from datetime import datetime
+    from src.decisions import FILTER_VERSION
+    def normalize_time(value):
+        value = value or ''
+        suffix = '+1' if '+1' in value else ''
+        for fmt in ('%I:%M %p', '%H:%M'):
+            try:
+                return datetime.strptime(value.replace('+1', '').strip().upper(), fmt).strftime('%H:%M') + suffix
+            except ValueError:
+                pass
+        return value
+    # Duplicate legs are repeated across date pairs; count each once per day.
+    unique = {}
+    for row in rows:
+        day = str(row.get('leg_date') or row['outbound' if row['leg_type'] == 'outbound' else 'inbound'])
+        key = (str(run_date), FILTER_VERSION, day, row['origin'], row['destination'],
+               row.get('airline', ''), normalize_time(row.get('outbound_departure')),
+               normalize_time(row.get('outbound_arrival')))
+        if key not in unique or row['price'] < unique[key][0]:
+            unique[key] = (row['price'], row.get('source_url', ''))
+    with get_conn() as conn:
+        # Replace queried scopes so same-day retries do not retain vanished options.
+        scopes = {(str(day), o, d) for o, d, day in diagnostics}
+        scopes.update((k[2], k[3], k[4]) for k in unique)
+        for day, origin, destination in scopes:
+            conn.execute('DELETE FROM flight_observations WHERE run_date=? AND filter_version=? AND leg_date=? AND origin=? AND destination=?',
+                         (str(run_date), FILTER_VERSION, day, origin, destination))
+        conn.executemany('INSERT OR REPLACE INTO flight_observations VALUES (?,?,?,?,?,?,?,?,?,?)',
+                         [key + value for key, value in unique.items()])
+        conn.executemany('INSERT OR REPLACE INTO query_observations VALUES (?,?,?,?,?,?)',
+                         [(str(run_date), FILTER_VERSION, str(day), o, d, status)
+                          for (o, d, day), status in diagnostics.items()])
+
+
+def get_decision_history(outbound, inbound):
+    from src.decisions import FILTER_VERSION
+    with get_conn() as conn:
+        rows = conn.execute('SELECT run_date, price, coverage_complete, filter_version FROM booking_decisions WHERE outbound=? AND inbound=? AND filter_version=? ORDER BY run_date',
+                            (str(outbound), str(inbound), FILTER_VERSION)).fetchall()
+    return [dict(run_date=r[0], price=r[1], coverage_complete=bool(r[2]), filter_version=r[3]) for r in rows]
+
+
+def record_booking_decisions(run_date, rows, pairs, diagnostics):
+    import json
+    from src.decisions import recommend, FILTER_VERSION
+    from src.holidays import holiday_dates
+    decisions = {}
+    for outbound, inbound in pairs:
+        selected = [r for r in rows if (r['outbound'], r['inbound']) == (outbound, inbound)]
+        out = [r['price'] for r in selected if r['leg_type'] == 'outbound']
+        inc = [r['price'] for r in selected if r['leg_type'] == 'inbound']
+        price = min(out) + min(inc) if out and inc else None
+        keys = [(a, 'BCN', outbound) for a in ('AMS', 'RTM')] + [('BCN', a, inbound) for a in ('AMS', 'RTM')]
+        complete = all(diagnostics.get(key) in ('ok', 'filtered_empty') for key in keys)
+        holiday = bool(holiday_dates(outbound, inbound))
+        decision = recommend(run_date, outbound, price, get_decision_history(outbound, inbound),
+                             holiday=holiday, coverage_complete=complete)
+        decisions[(outbound, inbound)] = decision
+        with get_conn() as conn:
+            conn.execute('INSERT OR REPLACE INTO booking_decisions VALUES (?,?,?,?,?,?,?,?)',
+                         (str(run_date), FILTER_VERSION, str(outbound), str(inbound), price,
+                          int(complete), int(holiday), json.dumps(decision, ensure_ascii=False)))
+    return decisions
