@@ -112,7 +112,7 @@ def _departure_ok(leg_date: date, departure_time: str, leg_type: str | None = No
         if is_morning_return_workday(leg_date):
             arr = _parse_time_to_24h(arrival_time or '')
             arrives_same_day = '+1' not in (arrival_time or '')
-            return (arrives_same_day and arr is not None and arr < t('09:00')) or dep >= t('17:00')
+            return (arrives_same_day and arr is not None and dep < arr and arr < t('09:00')) or dep >= t('17:00')
         if weekday < 5:
             return dep >= t('17:00')
     return dep >= t('16:00')
