@@ -21,6 +21,48 @@ def is_free_day(day):
     return day.weekday() >= 5 or day in HOLIDAYS
 
 
+def outbound_dates_for_weekend(saturday):
+    """Thursday/Friday normally; shift to the working eve of a Friday holiday block.
+
+    Holiday weekdays themselves are available at any time. Limit the weekly
+    options to Monday-Friday; multi-week breaks are covered by holiday pairs.
+    """
+    friday = saturday - timedelta(days=1)
+    thursday = friday - timedelta(days=1)
+    first = friday
+    if friday in HOLIDAYS:
+        while first.weekday() > 0 and first - timedelta(days=1) in HOLIDAYS:
+            first -= timedelta(days=1)
+    earliest = min(thursday, max(saturday - timedelta(days=5),
+                                first - timedelta(days=1)))
+    return [earliest + timedelta(days=i)
+            for i in range((friday - earliest).days + 1)]
+
+
+def inbound_dates_for_weekend(saturday):
+    """Sunday/Monday normally; extend through Monday holidays to the next workday."""
+    sunday = saturday + timedelta(days=1)
+    monday = sunday + timedelta(days=1)
+    last = monday
+    if monday in HOLIDAYS:
+        while is_free_day(last):
+            last += timedelta(days=1)
+    return [sunday + timedelta(days=i)
+            for i in range((last - sunday).days + 1)]
+
+
+def is_morning_return_workday(day):
+    """Monday's before-09:00 arrival window follows consecutive Monday holidays."""
+    if is_free_day(day):
+        return False
+    if day.weekday() == 0:
+        return True
+    monday = day - timedelta(days=day.weekday())
+    return monday in HOLIDAYS and all(
+        is_free_day(monday + timedelta(days=i)) for i in range(day.weekday())
+    )
+
+
 def workdays_affected(outbound, inbound):
     """Dates requiring an absence arrangement after evening departure.
 
