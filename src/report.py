@@ -69,7 +69,39 @@ def _leg(rows, diagnostics, leg_date, outbound):
     return 'Sin resultados verificados'
 
 
-def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=None, family_plan=None):
+def _horizon_radar(tracking, daily_saturdays=()):
+    """Historical long-range observations; never imply a stale quote is live."""
+    daily = set(daily_saturdays)
+    future = [t for t in tracking if t['weekend'] not in daily]
+    if not future:
+        return ''
+    html = ('<h2 style="font-size:18px">Radar de precios a largo plazo</h2>'
+            '<p>Seguimiento hasta unos 10 meses. Fechas lejanas: comprobación '
+            'periódica, no diaria. Cada precio indica cuándo se observó; '
+            'no equivale a una tarifa disponible hoy.</p>')
+    current_month = None
+    for item in future:
+        saturday = item['weekend']
+        month = saturday.strftime('%Y-%m')
+        if month != current_month:
+            html += f'<h3 style="font-size:14px;margin:14px 0 4px">{month}</h3>'
+            current_month = month
+        date_label = saturday.strftime('%d/%m')
+        if not item['checked_at']:
+            status = 'Primera comprobación pendiente'
+        elif item['best_price'] is None:
+            status = f'Sin precio completo verificado (consulta {escape(str(item["checked_at"]))})'
+        else:
+            status = (f'{_price(item["best_price"])}'
+                      f' · visto el {escape(str(item["checked_at"]))}'
+                      f' · {escape(str(item["outbound"]))} → {escape(str(item["inbound"]))}')
+        html += (f'<p style="margin:4px 0;font-size:12px">'
+                 f'<b>Finde {date_label}:</b> {status}</p>')
+    return html
+
+
+def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=None,
+                      family_plan=None, horizon_tracking=None, daily_saturdays=()):
     diagnostics = diagnostics or {}
     decisions = decisions or {}
     pairs = sorted(pair for pair in set(pairs or [(r['outbound'], r['inbound']) for r in rows])
@@ -193,6 +225,8 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
             '')
     coverage = build_coverage(trips, decisions, family_plan)
     html += render_coverage(coverage, join_opportunities(coverage, trips))
+    if horizon_tracking:
+        html += _horizon_radar(horizon_tracking, daily_saturdays)
     if decisions:
         html += ('<p style="padding:10px;background:#fff7ed"><b>Cuándo comprar</b><br>'
                  'Reglas iniciales de prudencia, todavía sin una ventana óptima aprendida: '
