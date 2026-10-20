@@ -21,7 +21,7 @@ def monitoring_plan(run_date: date, planning_start: date):
 
     First eight family weekends remain daily even when the family start is
     several months away. Beyond that, <=8 weeks are daily, 9-20 weeks get
-    two samples per week, and more distant weeks get one sample per week.
+    three samples per week, and more distant weeks get two samples per week.
     Holiday long stays and adjacent-weekend joins are considered only for
     weekends sampled on this run.
     """
@@ -43,11 +43,11 @@ def monitoring_plan(run_date: date, planning_start: date):
             due.add(sat)
         elif days_ahead <= TWICE_WEEKLY_UNTIL_WEEKS * 7:
             phase = (sat.toordinal() // 7) % 7
-            if today_bucket in (phase, (phase + 3) % 7):
+            if today_bucket in (phase, (phase + 2) % 7, (phase + 4) % 7):
                 due.add(sat)
         else:
             phase = (sat.toordinal() // 7) % 7
-            if today_bucket == phase:
+            if today_bucket in (phase, (phase + 3) % 7):
                 due.add(sat)
 
     chosen = {(out, inc) for out, inc in all_pairs
