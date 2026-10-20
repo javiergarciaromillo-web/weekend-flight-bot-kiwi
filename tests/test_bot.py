@@ -92,9 +92,13 @@ class SearchTests(unittest.TestCase):
         thu, mon = date(2026, 10, 22), date(2026, 10, 26)
         self.assertFalse(scraper._departure_ok(thu, '4:59 PM', 'outbound'))
         self.assertTrue(scraper._departure_ok(thu, '5:00 PM', 'outbound'))
-        for time, expected in [('7:59 AM', True), ('8:00 AM', True), ('8:01 AM', False),
-                               ('4:59 PM', False), ('5:00 PM', True), ('11:20 PM', True)]:
-            self.assertEqual(scraper._departure_ok(mon, time, 'inbound'), expected, time)
+        for departure, arrival, expected in [('6:00 AM', '8:59 AM', True),
+                                             ('6:00 AM', '9:00 AM', False),
+                                             ('5:00 PM', '7:00 PM', True),
+                                             ('11:20 PM', '1:20 AM+1', True)]:
+            self.assertEqual(scraper._departure_ok(mon, departure, 'inbound', arrival),
+                             expected, (departure, arrival))
+        self.assertFalse(scraper._departure_ok(mon, '7:59 AM', 'inbound'))
         row = dict(airline='KLM', departure_time='6:00 AM', arrival_time='8:30 AM',
                    stops='Nonstop', price=75)
         self.assertEqual(scraper._filter_relevant_flights([row], mon, 'BCN', 'AMS'), [row])
@@ -220,8 +224,9 @@ class HolidayTests(unittest.TestCase):
 
     def test_holiday_and_extended_return_times(self):
         self.assertTrue(scraper._departure_ok(date(2027, 3, 29), '8:00 AM', 'inbound'))
-        self.assertFalse(scraper._departure_ok(date(2027, 3, 29), '9:00 AM', 'inbound'))
-        self.assertTrue(scraper._departure_ok(date(2027, 3, 30), '9:00 AM', 'inbound'))
+        self.assertTrue(scraper._departure_ok(date(2027, 3, 29), '9:00 AM', 'inbound'))
+        self.assertTrue(scraper._departure_ok(date(2027, 3, 30), '6:00 AM', 'inbound', '8:30 AM'))
+        self.assertFalse(scraper._departure_ok(date(2027, 3, 30), '6:00 AM', 'inbound', '9:00 AM'))
         self.assertFalse(scraper._departure_ok(date(2027, 3, 25), '9:00 AM', 'outbound'))
 
 
@@ -259,30 +264,32 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(history[0]['best_combo'], 140)
             self.assertEqual(len(store.get_latest_learning_opportunities()), 1)
 
-    def test_main_saves_recovered_prices_and_final_diagnostics_before_email(self):
+    def test_main_saves_prices_and_traceability_before_email(self):
         from src import main as app
-        pair = (date(2026, 11, 12), date(2026, 11, 15))
+        pair = (date(2027, 2, 4), date(2027, 2, 7))
         key = ('AMS', 'BCN', pair[0])
-        out = dict(origin='AMS', destination='BCN', leg_date=pair[0], airline='Vueling', price=80,
+        saturday = date(2027, 2, 6)
+        out = dict(origin='AMS', destination='BCN', leg_date=pair[0],
+                   airline='Vueling', price=80,
                    outbound=pair[0], inbound=pair[1], leg_type='outbound',
                    outbound_departure='5:00 PM', outbound_arrival='7:00 PM')
-        inc = dict(out, origin='BCN', destination='AMS', leg_date=pair[1], leg_type='inbound', price=50)
+        inc = dict(out, origin='BCN', destination='AMS',
+                   leg_date=pair[1], leg_type='inbound', price=50)
         def operational(pairs, diagnostics):
-            diagnostics[key] = 'failed'
-            return [inc]
-        def learning(run_date, diagnostics):
             diagnostics[key] = 'ok'
-            return [out]
-        with tempfile.TemporaryDirectory() as folder, patch.object(app, 'init_db'), \
-                patch.object(app, 'save_flight_observations'), \
-                patch.object(app, 'record_booking_decisions', return_value={}), \
-                patch.object(app, 'generate_weekend_pairs', return_value=[pair]), \
-                patch.object(app, 'generate_holiday_pairs', return_value=[]), \
-                patch.object(app, 'search_google_flights', side_effect=operational), \
-                patch.object(app, 'run_learning_sampling', side_effect=learning), \
-                patch.object(app, 'save_weekend_snapshot') as snapshot, \
-                patch.object(app, 'build_html_report', return_value='<html>recovered</html>') as build, \
-                patch.object(app, 'get_latest_learning_opportunities', return_value=[]), \
+            return [out, inc]
+        with tempfile.TemporaryDirectory() as folder, patch.object(app, 'init_db'), \\
+                patch.object(app, 'save_flight_observations'), \\
+                patch.object(app, 'record_booking_decisions', return_value={}), \\
+                patch.object(app, 'monitoring_plan',
+                             return_value=([pair], [saturday], [saturday], [saturday])), \\
+                patch.object(app, 'search_google_flights', side_effect=operational) as scraper, \\
+                patch.object(app, 'save_sampled_weekends') as learning, \\
+                patch.object(app, 'save_weekend_snapshot') as snapshot, \\
+                patch.object(app, 'get_horizon_tracking', return_value=[]) as radar, \\
+                patch.object(app, 'build_html_report',
+                             return_value='<html>monitoring</html>') as build, \\
+                patch.object(app, 'get_latest_learning_opportunities', return_value=[]), \\
                 patch.object(app, 'send_email_html') as email:
             previous = os.getcwd()
             try:
@@ -291,10 +298,14 @@ class StoreTests(unittest.TestCase):
                 payload = json.loads(Path('data/report/report.json').read_text())
             finally:
                 os.chdir(previous)
+        scraper.assert_called_once()
         self.assertEqual(snapshot.call_args.kwargs['best_combo'], 130)
+        learning.assert_called_once()
+        radar.assert_called_once_with([saturday])
         self.assertEqual(build.call_args.kwargs['diagnostics'][key], 'ok')
         self.assertEqual(payload['queries'][0]['status'], 'ok')
         self.assertEqual(len(payload['flights']), 2)
+        self.assertEqual(payload['monitoring_days'], 300)
         email.assert_called_once()
 
 
