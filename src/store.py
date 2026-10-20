@@ -416,3 +416,42 @@ def record_booking_decisions(run_date, rows, pairs, diagnostics):
                          (str(run_date), FILTER_VERSION, str(outbound), str(inbound), price,
                           int(complete), int(holiday), json.dumps(decision, ensure_ascii=False)))
     return decisions
+
+
+def get_horizon_tracking(saturdays, since=None):
+    """Latest actually observed fare for each target family weekend.
+
+    Weekly remote checks can be several days old. An unpriced or failed latest
+    check must never be replaced by an older price and passed off as current.
+    """
+    from datetime import date, timedelta
+    from src.family import weekend_of
+    from src.planner import FILTER_HISTORY_START
+
+    start = str(since or FILTER_HISTORY_START)
+    if not saturdays:
+        return []
+    first = min(saturdays) - timedelta(days=7)
+    last = max(saturdays)
+    with get_conn() as conn:
+        observations = conn.execute(
+            """SELECT run_date, outbound, inbound, best_combo
+               FROM weekend_prices
+               WHERE run_date >= ? AND outbound >= ? AND outbound <= ?
+               ORDER BY run_date DESC""",
+            (start, str(first), str(last)),
+        ).fetchall()
+    result = {sat: {'weekend': sat, 'checked_at': None, 'best_price': None,
+                    'outbound': None, 'inbound': None} for sat in saturdays}
+    for run_day, out_str, inc_str, fare in observations:
+        out, inc = date.fromisoformat(out_str), date.fromisoformat(inc_str)
+        sat = weekend_of(out)
+        if sat not in result or not out <= sat < inc:
+            continue
+        item = result[sat]
+        if item['checked_at'] is None:
+            item['checked_at'] = run_day
+        if item['checked_at'] == run_day and fare is not None:
+            if item['best_price'] is None or fare < item['best_price']:
+                item.update(best_price=fare, outbound=out, inbound=inc)
+    return [result[sat] for sat in sorted(result)]
