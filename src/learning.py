@@ -112,3 +112,44 @@ def run_learning_sampling(run_date: date, diagnostics=None):
                 print(f"[ERROR] Learning {offset} {pattern_name}: {e}")
 
     return all_rows
+
+
+def save_sampled_weekends(run_date: date, rows: list[dict], pairs,
+                          daily_saturdays=()):
+    """Write observed far-weekend quotes without launching a second scraper.
+
+    A sampled date can be checked once or twice per week; the existing
+    learning_prices table retains timestamped actual quotes, never imputations.
+    """
+    from src.family import weekend_of
+    daily_saturdays = set(daily_saturdays)
+    grouped = {}
+    for row in rows:
+        grouped.setdefault((row['outbound'], row['inbound'], row['leg_type']), []).append(row)
+    saved = 0
+    for outbound, inbound in pairs:
+        if weekend_of(outbound) in daily_saturdays:
+            continue
+        outgoing = _best_row(grouped.get((outbound, inbound, 'outbound'), []))
+        returning = _best_row(grouped.get((outbound, inbound, 'inbound'), []))
+        best_out = outgoing['price'] if outgoing else None
+        best_in = returning['price'] if returning else None
+        fields = {}
+        for prefix, item in (('outbound', outgoing), ('inbound', returning)):
+            fields[f'{prefix}_origin'] = item.get('origin') if item else None
+            fields[f'{prefix}_destination'] = item.get('destination') if item else None
+            fields[f'{prefix}_airline'] = item.get('airline') if item else None
+            fields[f'{prefix}_departure_time'] = item.get('outbound_departure') if item else None
+            fields[f'{prefix}_arrival_time'] = item.get('outbound_arrival') if item else None
+            fields[f'{prefix}_source_url'] = item.get('source_url') if item else None
+        save_learning_snapshot(
+            run_date=run_date, sample_name=f'HORIZON_{outbound}_{inbound}',
+            outbound=outbound, inbound=inbound,
+            days_to_departure=(outbound-run_date).days,
+            pattern='HORIZON',
+            best_outbound=best_out, best_inbound=best_in,
+            best_combo=best_out + best_in if best_out is not None and best_in is not None else None,
+            **fields,
+        )
+        saved += 1
+    return saved
