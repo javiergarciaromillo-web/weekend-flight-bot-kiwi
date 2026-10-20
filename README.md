@@ -4,17 +4,19 @@ Informe diario de vuelos directos entre AMS/RTM y BCN, con histórico SQLite y e
 
 ## Búsqueda y filtros actuales
 
-- Horizonte operativo de siete semanas, desde el inicio de la rutina familiar confirmado.
+- **Horizonte de seguimiento de 300 días (~10 meses)**, limitado al inicio de la rutina familiar si todavía no ha empezado. Todas las semanas quedan en el radar, pero no se consultan todas a diario.
+- **Seguimiento diario** de las primeras 8 semanas familiares (incluso antes de febrero de 2027) y de los fines de semana a <=8 semanas vista; **tres comprobaciones semanales** entre 9 y 20 semanas y **dos semanales** de 21 semanas hasta el final del horizonte.
+- El reparto por días de la semana es determinista y escalonado por fin de semana. Los precios que no se han comprobado hoy se etiquetan como históricos con fecha, nunca como ofertas actuales.
 - Viajes semanales anclados en el sábado: normalmente ida jueves/viernes y vuelta domingo/lunes.
 - Ida en jueves laborable desde las 17:00; viernes laborable antes de las 08:00 o desde las 15:30. Resto de días laborables, después de las 17:00.
 - Vuelta el domingo desde las 16:00. El lunes laborable se permite aterrizar en NL antes de las 09:00 o salir de BCN desde las 17:00.
 - **Festivos NCIA**: salida y regreso a cualquier hora del día festivo; si el viernes y días anteriores son consecutivamente festivos, añadir el laborable inmediatamente anterior desde las 17:00. Si el lunes y días siguientes son festivos, añadir el primer laborable siguiente con llegada antes de las 09:00 o salida desde las 17:00. Se siguen buscando opciones de viaje más corto. Viernes–domingo se admite si el viernes es festivo (se excluye en fines de semana ordinarios).
 - La generación de fechas, filtrado de vuelos, muestreo lejano e informe familiar comparten estas reglas. No se puntúan transporte al aeropuerto ni conexiones terrestres; AMS y RTM no reciben prioridades distintas.
 - Vueling y Transavia; KLM también en búsquedas habituales y lejanas en rutas con AMS.
-- Cada ruta y fecha se consulta una sola vez por lote. El muestreo lejano utiliza otro lote para sus fechas adicionales.
+- Cada ruta y fecha se consulta una sola vez por ejecución. El aprendizaje lejano reutiliza los resultados operativos; no abre una segunda sesión de Google Flights para repetir consultas. Las estancias con festivos lejanos solo se consultan cuando toca comprobar una semana afectada.
 - Un fallo de consulta o una página sin bloques reconocibles significa disponibilidad sin verificar. Una página con vuelos reconocidos, todos descartados, significa sin opciones que cumplan los filtros.
 
-El informe abre con las tres combinaciones operativas más económicas, destaca bajadas de al menos 20 € y muestra un resumen por combinación con hasta dos opciones por trayecto. Termina con tres oportunidades lejanas observadas ese día. El total suma billetes de ida independientes y puede combinar aeropuertos.
+El informe abre con las tres combinaciones comprobadas más económicas, destaca bajadas de al menos 20 € y muestra un resumen por combinación con hasta dos opciones por trayecto. Incluye un radar por fin de semana con fecha de última observación, y también oportunidades lejanas observadas ese día. El total suma billetes de ida independientes y puede combinar aeropuertos.
 
 Las valoraciones describen la distancia al mínimo observado; no predicen precios ni recomiendan comprar. Se necesitan al menos cinco fechas con precio completo para valorar el histórico. Las ejecuciones repetidas sustituyen la observación del mismo día. El histórico comparable empieza el 20 de octubre de 2026, al incorporar ventanas desplazadas por festivos: las observaciones anteriores se conservan, pero no se usan para calcular mínimos o bajadas con estos filtros.
 
@@ -35,7 +37,7 @@ El flujo diario guarda `data/prices.db` en caché y como artefacto, y conserva p
 
 También publica el artefacto `flight-report`: `report.html` contiene el correo exacto y `report.json` las observaciones y estados de las consultas (esquema versión 1), para revisarlos desde el chat. Las tablas separan escapadas y estancias con festivos sin duplicar viajes, mantienen dos opciones por trayecto y se adaptan a pantallas pequeñas. Un resultado con escalas o de otra aerolínea es una consulta válida que no cumple los filtros, no un fallo de disponibilidad. Las consultas realmente no verificadas se detallan al final. Los registros de Python se publican sin buffering para seguir el progreso.
 
-Las consultas fallidas se reintentan en dos pasadas al final de cada lote (máximo tres intentos por ruta/fecha, con pausas de 2 y 5 segundos entre pasadas). Los resultados válidos que no cumplen los filtros no se reintentan. Si el muestreo posterior recupera una consulta operativa, se reutiliza antes de guardar el histórico y enviar el informe, manteniendo los filtros operativos de horarios y de aerolíneas por aeropuerto. Solo se muestran como sin verificar los fallos que persistan tras la recuperación. Los reintentos pueden alargar la ejecución y no garantizan que Google Flights responda.
+Las consultas fallidas se reintentan en dos pasadas al final del lote (máximo tres intentos por ruta/fecha, con pausas de 2 y 5 segundos entre pasadas). Los resultados válidos que no cumplen los filtros no se reintentan. Los precios lejanos se guardan a partir de la misma búsqueda; no hay segunda consulta paralela para completar resultados fallidos. Solo se muestran como sin verificar los fallos que persistan tras la recuperación. Los reintentos pueden alargar la ejecución y no garantizan que Google Flights responda.
 
 ## Límites
 
@@ -43,7 +45,7 @@ La extracción depende del formato de Google Flights. Los precios y equipaje deb
 
 ## Puentes NCIA
 
-`src/holidays.py` recoge las fechas oficiales NCIA de La Haya de 2026 y 2027 facilitadas por el usuario. Incluye los días sustitutorios y el cierre navideño; no añade festivos nacionales que NCIA no haya publicado. La búsqueda operativa añade puentes para los próximos 180 días y muestrea hasta seis opciones por bloque (de cero a cinco días laborables afectados), priorizando la duración. No es una búsqueda exhaustiva de todas las fechas posibles.
+`src/holidays.py` recoge las fechas oficiales NCIA de La Haya de 2026 y 2027 facilitadas por el usuario. Incluye los días sustitutorios y el cierre navideño; no añade festivos nacionales que NCIA no haya publicado. La búsqueda añade puentes dentro de los 300 días vigilados y muestrea hasta seis opciones por bloque (de cero a cinco días laborables afectados), priorizando la duración. No es una búsqueda exhaustiva de todas las fechas posibles.
 
 El informe destaca noches en España, festivos y días laborables afectados. Esta última cifra cuenta conservadoramente las fechas laborables posteriores a la ida y hasta la vuelta; presupone trabajar antes de la salida de tarde y no da por autorizado el teletrabajo o las vacaciones. Un regreso temprano puede requerir menos permiso del indicado. Los festivos NCIA habilitan todas las horas en su fecha, y las ventanas laborales se desplazan automáticamente a los días adyacentes; se conservan opciones cortas y puentes. Se conservan las estancias largas que incluyan festivos. El calendario posterior a 2027 está pendiente de publicación.
 
@@ -83,7 +85,7 @@ Additive SQLite tables retain all returned eligible flight observations (both
 operational and long-range), query outcomes and decisions with filter/policy
 versions. Repeated legs across trip combinations count once per day. Same-day
 reruns replace queried scopes. This is a daily snapshot, not an intraday series.
-The existing cheapest-price tables remain intact.
+The existing cheapest-price tables remain intact. Remote fare observations are persisted into the existing learning and detailed-flight tables, without a separate scraper run.
 
 Flight identity currently uses airline, route, departure date and normalized
 scheduled departure/arrival times: the scraper returns `N/A` for flight numbers.
@@ -99,7 +101,7 @@ policy evaluation. Decisions receive only strictly earlier complete observations
 Only trajectories with at least seven days and an observation within seven days
 before departure are included. Output reports chosen date, observed later regret
 and difference from the last observed fare; it is not an optimum or success rate.
-No evaluation is claimed until production data is available and trips mature.
+No evaluation is claimed until production data is available and trips mature. Twice/thrice-weekly samples may miss transient promotions and are not full daily coverage.
 
 Next modelling stages require: continuous cohorts from first search through
 purchase cutoff; explicit fare/baggage comparability; enough **distinct departed
@@ -115,13 +117,13 @@ on the existing scheduled run; no additional run or email is needed for testing.
 
 ### Weekly coverage and longer stays
 
-The seven-week operational horizon begins at the later of today and the confirmed
-family start date (no skipped first week). Thus February is searched now, rather
-than waiting until it falls within seven weeks.
+The 300-day horizon begins at the later of today and the confirmed
+family start date. The first eight family weekends are checked daily already
+during the preparation phase; thereafter daily monitoring applies within
+eight weeks, 3x weekly within 20 weeks and 2x weekly out to 300 days.
 Each Saturday groups Thursday–Sunday, Thursday–Monday and Friday–Monday choices;
 missing or expensive weeks remain visible instead of being replaced by cheaper
-weeks. The seven-week operational horizon is distinct from longer-range sampled
-prices and holiday searches; unsampled weeks beyond it have no coverage claim.
+weeks. All weekends inside the horizon are listed in a dated historical-price radar. Unsampled weekends explicitly say that their initial check is pending.
 
 `config/family_plan.json` records an optional `required_from`/`required_until`
 period and a `weekends` mapping of Saturday ISO date to `pending`, `booked`,
@@ -140,8 +142,8 @@ and annual TT/leave allocation. Suggestions require approval of presence and
 remote-work/leave arrangements. They do not consume balances or presume existing
 tickets can be refunded. Overlapping suggestions are alternatives, not additive.
 
-Monthly totals group Saturdays and sum the cheapest separate trips for pending
-or unverified weeks only, with priced/total counts. They are neither spending
+Monthly totals group Saturdays sampled **on that run** and sum the cheapest separate trips for pending
+or unverified weeks only, with priced/total counts; the long-range radar is a separate dated record. They are neither spending
 records nor full trip cost: purchased trips, extras and ground transfers are
 excluded. Weekly detail retains airline/airport/timetable choices. Labour-day
 estimates assume work before departure and conservatively count working return
