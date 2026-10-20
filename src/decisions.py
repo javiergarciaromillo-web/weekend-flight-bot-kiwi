@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from statistics import median
 
-POLICY_VERSION = '2026-10-19-family-v2'
-FILTER_VERSION = '2026-10-12'
+POLICY_VERSION = '2026-10-20-holiday-windows-v3'
+FILTER_VERSION = '2026-10-20'
 
 
 @dataclass(frozen=True)
