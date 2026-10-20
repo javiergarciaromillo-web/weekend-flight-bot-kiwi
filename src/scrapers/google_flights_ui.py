@@ -468,7 +468,8 @@ def _bind_leg(rows, outbound, inbound):
     if not allowed_pair(outbound, inbound):
         return []
     return [dict(row, outbound=outbound, inbound=inbound) for row in rows
-            if _departure_ok(row['leg_date'], row['outbound_departure'], row['leg_type'])
+            if _departure_ok(row['leg_date'], row['outbound_departure'], row['leg_type'],
+                             row.get('outbound_arrival'))
             and not (row['destination'] == 'BCN'
                     and holiday_dates(outbound, inbound)
                     and not is_free_day(row['leg_date'])
