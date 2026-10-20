@@ -278,19 +278,19 @@ class StoreTests(unittest.TestCase):
         def operational(pairs, diagnostics):
             diagnostics[key] = 'ok'
             return [out, inc]
-        with tempfile.TemporaryDirectory() as folder, patch.object(app, 'init_db'), \\
-                patch.object(app, 'save_flight_observations'), \\
-                patch.object(app, 'record_booking_decisions', return_value={}), \\
+        with (tempfile.TemporaryDirectory() as folder, patch.object(app, 'init_db'), 
+                patch.object(app, 'save_flight_observations'), 
+                patch.object(app, 'record_booking_decisions', return_value={}), 
                 patch.object(app, 'monitoring_plan',
-                             return_value=([pair], [saturday], [saturday], [saturday])), \\
-                patch.object(app, 'search_google_flights', side_effect=operational) as scraper, \\
-                patch.object(app, 'save_sampled_weekends') as learning, \\
-                patch.object(app, 'save_weekend_snapshot') as snapshot, \\
-                patch.object(app, 'get_horizon_tracking', return_value=[]) as radar, \\
+                             return_value=([pair], [saturday], [saturday], [saturday])), 
+                patch.object(app, 'search_google_flights', side_effect=operational) as scraper, 
+                patch.object(app, 'save_sampled_weekends') as learning, 
+                patch.object(app, 'save_weekend_snapshot') as snapshot, 
+                patch.object(app, 'get_horizon_tracking', return_value=[]) as radar, 
                 patch.object(app, 'build_html_report',
-                             return_value='<html>monitoring</html>') as build, \\
-                patch.object(app, 'get_latest_learning_opportunities', return_value=[]), \\
-                patch.object(app, 'send_email_html') as email:
+                             return_value='<html>monitoring</html>') as build, 
+                patch.object(app, 'get_latest_learning_opportunities', return_value=[]), 
+                patch.object(app, 'send_email_html') as email):
             previous = os.getcwd()
             try:
                 os.chdir(folder)
