@@ -7,7 +7,7 @@ from datetime import date, timedelta
 from html import escape
 from pathlib import Path
 
-from src.holidays import workdays_affected
+from src.holidays import workdays_affected, outbound_dates_for_weekend, inbound_dates_for_weekend
 from src.budget import estimate_allocation
 
 
@@ -48,9 +48,12 @@ def build_coverage(trips, decisions, plan=None):
     groups = {}
     for trip in trips:
         out, inc = trip['outbound'], trip['inbound']
-        if (out.weekday(), inc.weekday(), (inc-out).days) not in ((3,6,3),(3,0,4),(4,0,3)):
+        saturday = weekend_of(out)
+        # Holiday extensions are still alternatives for this same family weekend.
+        # Joined two-weekend stays must not replace individual-week coverage.
+        if out not in outbound_dates_for_weekend(saturday) or inc not in inbound_dates_for_weekend(saturday):
             continue
-        groups.setdefault(weekend_of(out), []).append(trip)
+        groups.setdefault(saturday, []).append(trip)
     result = []
     for week, choices in sorted(groups.items()):
         key = str(week)
@@ -76,8 +79,8 @@ Only alternatives, never cumulatively reserved or deducted from annual balances.
         if not second or any(w['state'] not in ('pending', 'unknown') or not w['best'] for w in (first, second)):
             continue
         candidates = [t for t in trips if t['total'] is not None
-                      and weekend_of(t['outbound']) == first['weekend']
-                      and second['weekend']+timedelta(days=1) <= t['inbound'] <= second['weekend']+timedelta(days=2)]
+                      and t['outbound'] in outbound_dates_for_weekend(first['weekend'])
+                      and t['inbound'] in inbound_dates_for_weekend(second['weekend'])]
         for trip in candidates:
             separate = first['best']['total'] + second['best']['total']
             saving = separate - trip['total']
