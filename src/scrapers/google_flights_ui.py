@@ -86,33 +86,30 @@ def _parse_time_to_24h(value: str) -> datetime.time | None:
     return None
 
 
-def _departure_ok(leg_date: date, departure_time: str, leg_type: str | None = None) -> bool:
-    """
-    Rules:
-    - Thursday outbound -> from 17:00
-    - Friday outbound -> whole day
-    - Sunday inbound -> from 16:00
-    - Monday inbound -> departure up to 08:00 inclusive or from 17:00
-    """
+def _departure_ok(leg_date: date, departure_time: str, leg_type: str | None = None,
+                  arrival_time: str | None = None) -> bool:
+    """Operational weekday windows, using local airport times."""
     weekday = leg_date.weekday()
     dep = _parse_time_to_24h(departure_time)
     if dep is None:
         return False
-    # Explicit weekly constraints also apply on a published holiday.
-    if weekday == 3 and leg_type == 'outbound':
-        return dep >= datetime.strptime('17:00', '%H:%M').time()
-    if weekday == 0 and leg_type == 'inbound':
-        return (dep <= datetime.strptime('08:00', '%H:%M').time()
-                or dep >= datetime.strptime('17:00', '%H:%M').time())
-
-    if leg_type == "inbound" and weekday < 5:
-        return _parse_time_to_24h(departure_time) is not None
-
-    if leg_date in HOLIDAYS or weekday in (4, 0):  # Published holiday, Friday or Monday
+    t = lambda value: datetime.strptime(value, '%H:%M').time()
+    if leg_type == 'outbound':
+        if weekday == 4:  # Friday: very early or after work
+            return dep < t('08:00') or dep >= t('15:30')
+        if weekday < 5:  # Monday-Thursday after work
+            return dep >= t('17:00')
+    if leg_type == 'inbound':
+        if weekday == 0:  # Monday: land in NL before 09:00, or leave after work
+            arr = _parse_time_to_24h(arrival_time or '')
+            return (arr is not None and arr < t('09:00')) or dep >= t('17:00')
+        if weekday == 6:  # Sunday
+            return dep >= t('16:00')
+        if weekday < 5:
+            return dep >= t('17:00')
+    if leg_date in HOLIDAYS:
         return True
-
-    threshold = datetime.strptime("16:00", "%H:%M").time()
-    return dep >= threshold
+    return dep >= t('16:00')
 
 
 def _canonical_airline_name(raw: str) -> str:
@@ -313,7 +310,8 @@ def _filter_relevant_flights(
             continue
 
         if not _departure_ok(leg_date, row["departure_time"],
-                             "outbound" if destination == "BCN" else "inbound"):
+                             "outbound" if destination == "BCN" else "inbound",
+                             row.get("arrival_time")):
             continue
 
         if not (30 <= row["price"] <= 2000):
