@@ -8,7 +8,7 @@ from datetime import date, datetime
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
-from src.holidays import HOLIDAYS, holiday_dates, is_free_day
+from src.holidays import is_free_day, is_morning_return_workday
 from src.planner import allowed_pair
 
 DEBUG_DIR = Path("debug")
@@ -88,27 +88,33 @@ def _parse_time_to_24h(value: str) -> datetime.time | None:
 
 def _departure_ok(leg_date: date, departure_time: str, leg_type: str | None = None,
                   arrival_time: str | None = None) -> bool:
-    """Operational weekday windows, using local airport times."""
-    weekday = leg_date.weekday()
+    """Local-time eligibility; NCIA holiday weekdays are unrestricted.
+
+    The Monday early-arrival option moves to the first working day after any
+    consecutive holidays starting on Monday. The working eve of a Friday
+    holiday block uses the normal after-work restriction.
+    """
     dep = _parse_time_to_24h(departure_time)
     if dep is None:
         return False
     t = lambda value: datetime.strptime(value, '%H:%M').time()
+    weekday = leg_date.weekday()
+    if is_free_day(leg_date) and weekday < 6:
+        return True
     if leg_type == 'outbound':
-        if weekday == 4:  # Friday: very early or after work
+        if weekday == 4:
             return dep < t('08:00') or dep >= t('15:30')
-        if weekday < 5:  # Monday-Thursday after work
-            return dep >= t('17:00')
-    if leg_type == 'inbound':
-        if weekday == 0:  # Monday: land in NL before 09:00, or leave after work
-            arr = _parse_time_to_24h(arrival_time or '')
-            return (arr is not None and arr < t('09:00')) or dep >= t('17:00')
-        if weekday == 6:  # Sunday
-            return dep >= t('16:00')
         if weekday < 5:
             return dep >= t('17:00')
-    if leg_date in HOLIDAYS:
-        return True
+    if leg_type == 'inbound':
+        if weekday == 6:
+            return dep >= t('16:00')
+        if is_morning_return_workday(leg_date):
+            arr = _parse_time_to_24h(arrival_time or '')
+            arrives_same_day = '+1' not in (arrival_time or '')
+            return (arrives_same_day and arr is not None and arr < t('09:00')) or dep >= t('17:00')
+        if weekday < 5:
+            return dep >= t('17:00')
     return dep >= t('16:00')
 
 
@@ -469,14 +475,7 @@ def _bind_leg(rows, outbound, inbound):
         return []
     return [dict(row, outbound=outbound, inbound=inbound) for row in rows
             if _departure_ok(row['leg_date'], row['outbound_departure'], row['leg_type'],
-                             row.get('outbound_arrival'))
-            and not (row['destination'] == 'BCN'
-                    and holiday_dates(outbound, inbound)
-                    and not is_free_day(row['leg_date'])
-                    and row['leg_date'].weekday() != 4  # Friday early departures are explicitly allowed
-                    and (_parse_time_to_24h(row['outbound_departure']) is None
-                         or _parse_time_to_24h(row['outbound_departure'])
-                         < datetime.strptime('17:00', '%H:%M').time()))]
+                             row.get('outbound_arrival'))]
 
 
 def recover_failed_queries(pairs, rows, diagnostics, later_rows, later_diagnostics):
