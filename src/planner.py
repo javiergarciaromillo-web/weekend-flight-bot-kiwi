@@ -5,9 +5,12 @@ from typing import List, Tuple
 
 
 def allowed_pair(outbound: date, inbound: date) -> bool:
-    """Exclude Friday–Sunday weekends; retain longer holiday stays."""
-    return not (outbound.weekday() == 4 and inbound.weekday() == 6
-                and (inbound - outbound).days == 2)
+    """Exclude ordinary Friday-Sunday trips; a free Friday can justify one."""
+    if outbound.weekday() == 4 and inbound.weekday() == 6 and (inbound-outbound).days == 2:
+        # Friday-Sunday is too short normally; a free Friday adds a full day.
+        from src.holidays import HOLIDAYS
+        return outbound in HOLIDAYS
+    return outbound < inbound
 
 
 # Earlier prices used different departure windows and are not comparable.
@@ -20,7 +23,7 @@ def generate_weekend_pairs(
     skip_weeks: int = 0,
 ) -> List[Tuple[date, date]]:
     """
-    Generate Thu–Sun, Thu–Mon and Fri–Mon pairs.
+    Generate weekly date pairs, extending dates across NCIA holiday blocks.
 
     Example:
     - weeks=7
@@ -30,32 +33,20 @@ def generate_weekend_pairs(
     skip the first 7 days from today and then scan the following 7 weeks.
     """
 
-    pairs: list[tuple[date, date]] = []
+    from src.holidays import outbound_dates_for_weekend, inbound_dates_for_weekend
 
     scan_start = start_date + timedelta(days=skip_weeks * 7)
-    scan_days = weeks * 7
+    scan_end = scan_start + timedelta(weeks=weeks)
+    pairs: set[tuple[date, date]] = set()
 
-    for i in range(scan_days):
-        d = scan_start + timedelta(days=i)
-
-        # Thursday or Friday
-        if d.weekday() not in [3, 4]:
+    for offset in range((scan_end - scan_start).days):
+        saturday = scan_start + timedelta(days=offset)
+        if saturday.weekday() != 5:
             continue
-
-        sunday = d + timedelta(days=(6 - d.weekday()))
-        monday = sunday + timedelta(days=1)
-
-        if d.weekday() == 3:
-            pairs.append((d, sunday))
-        pairs.append((d, monday))
-
-    # remove duplicates while preserving order
-    seen = set()
-    unique_pairs = []
-    for pair in pairs:
-        if pair in seen:
-            continue
-        seen.add(pair)
-        unique_pairs.append(pair)
-
-    return unique_pairs
+        for outbound in outbound_dates_for_weekend(saturday):
+            if not (scan_start <= outbound < scan_end):
+                continue
+            for inbound in inbound_dates_for_weekend(saturday):
+                if allowed_pair(outbound, inbound):
+                    pairs.add((outbound, inbound))
+    return sorted(pairs)
