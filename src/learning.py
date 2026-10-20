@@ -4,6 +4,8 @@ from datetime import date, timedelta
 
 from src.scrapers.google_flights_ui import search_google_flights
 from src.store import save_learning_snapshot
+from src.holidays import outbound_dates_for_weekend, inbound_dates_for_weekend
+from src.planner import allowed_pair
 
 
 OFFSETS = [30, 45, 60, 75, 90, 120, 150]
@@ -18,15 +20,22 @@ def _next_weekday(base: date, weekday: int) -> date:
 
 def _build_pairs_for_offset(run_date: date, offset: int):
     base = run_date + timedelta(days=offset)
-
     thu = _next_weekday(base, 3)
-    fri = _next_weekday(base, 4)
-
-    return [
-        ("THU-SUN", thu, thu + timedelta(days=3)),
-        ("THU-MON", thu, thu + timedelta(days=4)),
-        ("FRI-MON", fri, fri + timedelta(days=3)),
+    fri = thu + timedelta(days=1)
+    saturday = fri + timedelta(days=1)
+    baseline = [
+        ("THU-SUN", thu, saturday + timedelta(days=1)),
+        ("THU-MON", thu, saturday + timedelta(days=2)),
+        ("FRI-MON", fri, saturday + timedelta(days=2)),
     ]
+    # Sample shifted holiday alternatives in the long-range learning series too.
+    seen = {(out, inc) for _, out, inc in baseline}
+    for out in outbound_dates_for_weekend(saturday):
+        for inc in inbound_dates_for_weekend(saturday):
+            if (out, inc) not in seen and allowed_pair(out, inc):
+                baseline.append((f"CAL-{out:%Y%m%d}-{inc:%Y%m%d}", out, inc))
+                seen.add((out, inc))
+    return baseline
 
 
 def _best_row(rows: list[dict]) -> dict | None:
