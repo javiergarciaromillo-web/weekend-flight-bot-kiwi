@@ -5,15 +5,14 @@ import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from src.planner import generate_weekend_pairs
-from src.holidays import generate_holiday_pairs
-from src.scrapers.google_flights_ui import search_google_flights, recover_failed_queries
+from src.horizon import monitoring_plan
+from src.scrapers.google_flights_ui import search_google_flights
 from src.report import build_html_report
 from src.emailer import send_email_html
-from src.store import init_db, save_weekend_snapshot, get_latest_learning_opportunities
+from src.store import init_db, save_weekend_snapshot, get_latest_learning_opportunities, get_horizon_tracking
 from src.store import save_flight_observations, record_booking_decisions
 from src.family import joined_pairs, load_plan
-from src.learning import run_learning_sampling
+from src.learning import save_sampled_weekends
 
 
 def main() -> None:
@@ -25,23 +24,20 @@ def main() -> None:
     # Search the family period even before it enters the usual seven-week horizon.
     planning_start = max(run_date, date.fromisoformat(family_plan['required_from'])) if family_plan.get('required_from') else run_date
 
-    print("[INFO] Generating weekend pairs...")
-    pairs = generate_weekend_pairs(
-        start_date=planning_start,
-        weeks=7,
-        skip_weeks=0,
+    print("[INFO] Planning rolling 300-day fare monitoring...")
+    baseline_pairs, visible_saturdays, daily_saturdays, sampled_saturdays = monitoring_plan(
+        run_date, planning_start,
     )
+    # Long stays over adjacent weekends reuse only the departure/return dates
+    # already selected today; no extra distant dates are queried off schedule.
+    pairs = sorted(set(baseline_pairs + joined_pairs(baseline_pairs)))
+    print(f"[INFO] Monitoring {len(visible_saturdays)} weekends, "
+          f"sampling {len(sampled_saturdays)} today ({len(daily_saturdays)} daily), "
+          f"{len(pairs)} travel combinations")
 
-    pairs = sorted(set(pairs + joined_pairs(pairs) + generate_holiday_pairs(planning_start, horizon_days=max(0, 180-(planning_start-run_date).days))))
-
-    print("[INFO] Scraping operational flights...")
+    print("[INFO] Scraping scheduled flight dates once...")
     diagnostics = {}
     rows = search_google_flights(pairs, diagnostics=diagnostics)
-
-    print("[INFO] Running learning engine before report...")
-    learning_diagnostics = {}
-    learning_rows = run_learning_sampling(run_date, diagnostics=learning_diagnostics)
-    rows = recover_failed_queries(pairs, rows, diagnostics, learning_rows, learning_diagnostics)
 
     # Save and report only the final observations after all recovery attempts.
     for outbound, inbound in pairs:
@@ -69,12 +65,15 @@ def main() -> None:
             best_combo=best_combo,
         )
 
-    all_diagnostics = {**learning_diagnostics, **diagnostics}
-    save_flight_observations(run_date, learning_rows + rows, all_diagnostics)
+    save_sampled_weekends(run_date, rows, baseline_pairs, daily_saturdays=daily_saturdays)
+    save_flight_observations(run_date, rows, diagnostics)
     decisions = record_booking_decisions(run_date, rows, pairs, diagnostics)
 
     print("[INFO] Building report...")
-    html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics, decisions=decisions, family_plan=family_plan)
+    radar = get_horizon_tracking(visible_saturdays)
+    html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics,
+                             decisions=decisions, family_plan=family_plan,
+                             horizon_tracking=radar, daily_saturdays=daily_saturdays)
 
     # Retain the exact report and source observations for review from this chat.
     report_dir = Path('data/report')
@@ -85,6 +84,10 @@ def main() -> None:
         'run_date': run_date,
         'pairs': pairs,
         'family_plan': family_plan,
+        'monitoring_days': 300,
+        'daily_weekends': daily_saturdays,
+        'sampled_weekends_today': sampled_saturdays,
+        'horizon_tracking': radar,
         'flights': rows,
         'decisions': [dict(outbound=o, inbound=i, **d) for (o, i), d in decisions.items()],
         'queries': [dict(origin=o, destination=d, date=day, status=status)
