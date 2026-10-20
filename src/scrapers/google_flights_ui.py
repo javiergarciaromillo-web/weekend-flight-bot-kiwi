@@ -473,6 +473,7 @@ def _bind_leg(rows, outbound, inbound):
             and not (row['destination'] == 'BCN'
                     and holiday_dates(outbound, inbound)
                     and not is_free_day(row['leg_date'])
+                    and row['leg_date'].weekday() != 4  # Friday early departures are explicitly allowed
                     and (_parse_time_to_24h(row['outbound_departure']) is None
                          or _parse_time_to_24h(row['outbound_departure'])
                          < datetime.strptime('17:00', '%H:%M').time()))]
