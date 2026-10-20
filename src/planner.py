@@ -14,7 +14,7 @@ def allowed_pair(outbound: date, inbound: date) -> bool:
 
 
 # Earlier prices used different departure windows and are not comparable.
-FILTER_HISTORY_START = date(2026, 10, 12)
+FILTER_HISTORY_START = date(2026, 10, 20)
 
 
 def generate_weekend_pairs(
