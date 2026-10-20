@@ -4,17 +4,19 @@ Informe diario de vuelos directos entre AMS/RTM y BCN, con histórico SQLite y e
 
 ## Búsqueda y filtros actuales
 
-- Próximas siete semanas, omitiendo los primeros siete días.
-- Escapadas jueves–domingo, jueves–lunes o viernes–lunes. Se excluye viernes–domingo.
-- Ida jueves desde las 17:00 o viernes a cualquier hora.
-- Vuelta domingo desde las 16:00 o lunes con salida hasta las 08:00 inclusive o desde las 17:00. Las ventanas de jueves y lunes también se mantienen en festivos.
+- Horizonte operativo de siete semanas, desde el inicio de la rutina familiar confirmado.
+- Viajes semanales anclados en el sábado: normalmente ida jueves/viernes y vuelta domingo/lunes.
+- Ida en jueves laborable desde las 17:00; viernes laborable antes de las 08:00 o desde las 15:30. Resto de días laborables, después de las 17:00.
+- Vuelta el domingo desde las 16:00. El lunes laborable se permite aterrizar en NL antes de las 09:00 o salir de BCN desde las 17:00.
+- **Festivos NCIA**: salida y regreso a cualquier hora del día festivo; si el viernes y días anteriores son consecutivamente festivos, añadir el laborable inmediatamente anterior desde las 17:00. Si el lunes y días siguientes son festivos, añadir el primer laborable siguiente con llegada antes de las 09:00 o salida desde las 17:00. Se siguen buscando opciones de viaje más corto. Viernes–domingo se admite si el viernes es festivo (se excluye en fines de semana ordinarios).
+- La generación de fechas, filtrado de vuelos, muestreo lejano e informe familiar comparten estas reglas. No se puntúan transporte al aeropuerto ni conexiones terrestres; AMS y RTM no reciben prioridades distintas.
 - Vueling y Transavia; KLM también en búsquedas habituales y lejanas en rutas con AMS.
 - Cada ruta y fecha se consulta una sola vez por lote. El muestreo lejano utiliza otro lote para sus fechas adicionales.
 - Un fallo de consulta o una página sin bloques reconocibles significa disponibilidad sin verificar. Una página con vuelos reconocidos, todos descartados, significa sin opciones que cumplan los filtros.
 
 El informe abre con las tres combinaciones operativas más económicas, destaca bajadas de al menos 20 € y muestra un resumen por combinación con hasta dos opciones por trayecto. Termina con tres oportunidades lejanas observadas ese día. El total suma billetes de ida independientes y puede combinar aeropuertos.
 
-Las valoraciones describen la distancia al mínimo observado; no predicen precios ni recomiendan comprar. Se necesitan al menos cinco fechas con precio completo para valorar el histórico. Las ejecuciones repetidas sustituyen la observación del mismo día. El histórico comparable empieza el 12 de octubre de 2026, al cambiar las ventanas horarias y admitir KLM: las observaciones anteriores se conservan, pero no se usan para calcular mínimos o bajadas con estos filtros.
+Las valoraciones describen la distancia al mínimo observado; no predicen precios ni recomiendan comprar. Se necesitan al menos cinco fechas con precio completo para valorar el histórico. Las ejecuciones repetidas sustituyen la observación del mismo día. El histórico comparable empieza el 20 de octubre de 2026, al incorporar ventanas desplazadas por festivos: las observaciones anteriores se conservan, pero no se usan para calcular mínimos o bajadas con estos filtros.
 
 ## Ejecución local
 
@@ -43,7 +45,7 @@ La extracción depende del formato de Google Flights. Los precios y equipaje deb
 
 `src/holidays.py` recoge las fechas oficiales NCIA de La Haya de 2026 y 2027 facilitadas por el usuario. Incluye los días sustitutorios y el cierre navideño; no añade festivos nacionales que NCIA no haya publicado. La búsqueda operativa añade puentes para los próximos 180 días y muestrea hasta seis opciones por bloque (de cero a cinco días laborables afectados), priorizando la duración. No es una búsqueda exhaustiva de todas las fechas posibles.
 
-El informe destaca noches en España, festivos y días laborables afectados. Esta última cifra cuenta conservadoramente las fechas laborables posteriores a la ida y hasta la vuelta; presupone trabajar antes de la salida de tarde y no da por autorizado el teletrabajo o las vacaciones. Un regreso temprano puede requerir menos permiso del indicado. Se mantienen los horarios ordinarios de jueves y lunes también en festivos; otros días festivos pueden ampliar horarios. Se conservan las estancias largas que incluyan festivos. El calendario posterior a 2027 está pendiente de publicación.
+El informe destaca noches en España, festivos y días laborables afectados. Esta última cifra cuenta conservadoramente las fechas laborables posteriores a la ida y hasta la vuelta; presupone trabajar antes de la salida de tarde y no da por autorizado el teletrabajo o las vacaciones. Un regreso temprano puede requerir menos permiso del indicado. Los festivos NCIA habilitan todas las horas en su fecha, y las ventanas laborales se desplazan automáticamente a los días adyacentes; se conservan opciones cortas y puentes. Se conservan las estancias largas que incluyan festivos. El calendario posterior a 2027 está pendiente de publicación.
 
 ## Presupuesto anual
 
