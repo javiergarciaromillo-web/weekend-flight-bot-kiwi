@@ -3,10 +3,10 @@ from __future__ import annotations
 from datetime import date, datetime
 from html import escape
 
-from src.family import build_coverage, join_opportunities, render_coverage
+from src.family import build_coverage, join_opportunities, render_coverage, weekend_of
 from src.store import get_weekend_history, get_latest_learning_opportunities
 from src.holidays import holiday_dates, workdays_affected
-from src.budget import REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, estimate_allocation
+from src.budget import REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, estimate_allocation, trip_work_dates
 from src.planner import allowed_pair, FILTER_HISTORY_START
 
 
@@ -225,6 +225,10 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
             f'{len(complete)}/{len(trips)} viajes con precio completo</p>'
             '')
     coverage = build_coverage(trips, decisions, family_plan)
+    # The first block is actionable daily coverage; remote checks belong in the radar.
+    if daily_saturdays:
+        daily = set(daily_saturdays)
+        coverage = [week for week in coverage if week['weekend'] in daily]
     html += render_coverage(coverage, join_opportunities(coverage, trips))
     if horizon_tracking:
         html += _horizon_radar(horizon_tracking, daily_saturdays)
