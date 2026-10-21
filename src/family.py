@@ -10,7 +10,8 @@ from pathlib import Path
 from src.holidays import workdays_affected, outbound_dates_for_weekend, inbound_dates_for_weekend
 from src.budget import (estimate_allocation, trip_work_dates, assess_remote_plan,
                         REMOTE_WORK_DAYS, MAX_CONSECUTIVE_REMOTE_DAYS,
-                        annual_tt_outlook, projected_annual_tt)
+                        annual_tt_outlook, projected_annual_tt,
+                        projected_selection_tt)
 
 
 STATES = {'pending', 'booked', 'skipped', 'covered', 'unknown'}
@@ -189,6 +190,21 @@ def render_coverage(coverage, joins, annual_outlook=None):
                  f'faltan las reservas, vacaciones y TT ya aprobados. '
                  f'Máximo ordinario: {MAX_CONSECUTIVE_REMOTE_DAYS} jornadas TT '
                  'seguidas; superar ese límite exige autorización especial.</p>')
+        selected_forecast = projected_selection_tt(coverage, overview)
+        if selected_forecast and selected_forecast['priced_weeks']:
+            future = selected_forecast['projected']
+            warning = (f'<b style="color:#9a3412">ATENCIÓN: {future}/'
+                       f'{REMOTE_WORK_DAYS} TT en este escenario. '
+                       'Conviene reducir los TT de alguna alternativa o reservar '
+                       'vacaciones, porque el cupo teórico se supera.</b>'
+                       if selected_forecast['exceeds_cap']
+                       else f'<b>{future}/{REMOTE_WORK_DAYS} TT</b> en este escenario.')
+            html += (f'<p style="font-size:12px;border-left:3px solid #94a3b8;'
+                     f'padding:8px 11px;margin:8px 0">'
+                     f'Sustituyendo por las mejores alternativas de '
+                     f'{selected_forecast["priced_weeks"]} fines de semana comprobados: '
+                     + warning +
+                     ' Es una proyección, no un calendario reservado.</p>')
     if not coverage or not all(w['period_confirmed'] for w in coverage):
         html += ('<p><b>Inicio de la rutina familiar pendiente de confirmar.</b> '
                  'Planificación provisional; no implica que debas comprar todas las fechas.</p>')
