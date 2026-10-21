@@ -8,15 +8,18 @@ from html import escape
 from pathlib import Path
 
 from src.holidays import workdays_affected, outbound_dates_for_weekend, inbound_dates_for_weekend
+from src.travel_plan import ALL_STATES, NO_TRAVEL_STATES, forecast_config
 from src.budget import (estimate_allocation, trip_work_dates, assess_remote_plan,
                         REMOTE_WORK_DAYS, MAX_CONSECUTIVE_REMOTE_DAYS,
                         annual_tt_outlook, projected_annual_tt,
                         projected_selection_tt)
 
 
-STATES = {'pending', 'booked', 'skipped', 'covered', 'unknown'}
+STATES = ALL_STATES
 LABELS = {'pending': 'Pendiente de comprar', 'booked': 'Comprado',
           'skipped': 'Excepción: no viajar', 'covered': 'Cubierto por estancia',
+          'vacation': 'Vacaciones: sin vuelo semanal',
+          'visiting_nl': 'Familia en Países Bajos: sin vuelo semanal',
           'unknown': 'Reserva sin verificar'}
 
 
@@ -27,6 +30,7 @@ def load_plan(path=Path('config/family_plan.json')):
             date.fromisoformat(plan[key])
     if plan.get('required_from') and plan.get('required_until') and plan['required_from'] > plan['required_until']:
         raise ValueError('Family coverage dates are reversed')
+    forecast_config(plan)  # Fail early on invalid long-range assumptions.
     for saturday, status in plan.get('weekends', {}).items():
         if date.fromisoformat(saturday).weekday() != 5 or status not in STATES:
             raise ValueError('Weekend state must use a Saturday and an explicit supported status')
@@ -226,7 +230,7 @@ def render_coverage(coverage, joins, annual_outlook=None):
                  f'padding:12px;margin:0 0 12px;background:#fff">'
                  f'<div style="font-size:15px;margin-bottom:6px"><b>Fin de semana {_day(saturday)}</b>'
                  f' <span style="font-size:11px;color:#64748b">· {label}</span></div>')
-        if state in ('booked', 'covered', 'skipped'):
+        if state in ('booked', 'covered', 'skipped', 'vacation', 'visiting_nl'):
             html += '<p style="font-size:12px">Sin recomendación de nueva compra.</p></div>'
             continue
         if not best:
