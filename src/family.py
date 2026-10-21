@@ -282,8 +282,16 @@ def render_coverage(coverage, joins, annual_outlook=None):
                      f' · Revisar: {escape(str(decision.get("review_on", "—")))}'
                      f' · Límite provisional: {escape(str(decision.get("deadline", "—")))}</div>')
         if state == 'unknown':
-            html += ('<p style="font-size:11px;color:#64748b;margin:4px 0">'
-                     'Reserva aún sin verificar: confirma si ya tienes billetes.</p>')
+            if annual_outlook and annual_outlook.get('forecast_used'):
+                html += ('<p style="font-size:11px;color:#64748b;margin:4px 0">'
+                         '<b>Viaje todavía por confirmar.</b> Antes de comprar, '
+                         'comprueba que no coincida con tus vacaciones, con '
+                         'una visita de Raquel a Países Bajos o con otro '
+                         'fin de semana sin viaje; verifica también si '
+                         'ya tienes billetes.</p>')
+            else:
+                html += ('<p style="font-size:11px;color:#64748b;margin:4px 0">'
+                         'Reserva aún sin verificar: confirma si ya tienes billetes.</p>')
         ordered = sorted(week['choices'],
                          key=lambda t: (t['total'] is None, option_risk(t),
                                         t['total'] or 0, t['outbound'], t['inbound']))
