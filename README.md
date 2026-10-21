@@ -60,8 +60,9 @@ El usuario confirma los cupos completos para 2027: 46 días de teletrabajo y 30 
 - **46 TT en total para el año 2027**, compartidos por todos los viajes. No son 46 por viaje; el bot no afirma conocer el saldo restante sin registros de TT aprobados y consumidos.
 - **Máximo ordinario: cinco jornadas de TT consecutivas**. Una secuencia de viernes TT y lunes TT no se considera interrumpida solo por el fin de semana; los días festivos intermedios tampoco reinician la secuencia. Superar cinco jornadas consecutivas requiere autorización especial o reorganización efectiva con vacaciones.
 - La selección de alternativas y las estancias unidas da prioridad a opciones compatibles con el límite de cinco jornadas. Las que lo exceden se muestran como **no prioritarias** con advertencia explícita; el bot no tramita ni presupone autorizaciones.
-- El informe añade una **proyección orientativa** de consumo anual para 2027: supone un viernes TT por cada fin de semana familiar (excepto viernes festivos NCIA). Del 1 de febrero al 31 de diciembre de 2027 aparecen 47 fines de semana, y el escenario de referencia consume 45 de los 46 TT. Este escenario no equivale a reservas, autorización, compromiso de volar o saldo real.
-- A esa base se sustituyen los TT necesarios de los fines de semana actualmente consultados y se indica cuándo el escenario combinado supera 46 días. Las estancias que unen dos fines de semana sustituyen ambos viernes de referencia, para que no se atribuyan cupos duplicados.
+- **Previsión realista de 2027:** enero sin viajes (inicio 1 de febrero), **seis semanas de vacaciones sin TT** aún sin fechas, visita familiar a NL aproximadamente cada **cuatro a seis semanas**, y entre **cero y dos fines de semana adicionales sin viajar** como sensibilidad provisional. La última semana de diciembre está cubierta por festivos NCIA y el sábado 25 de diciembre se marca explícitamente como `holiday_break`. No se descuentan días festivos dos veces.
+- En 2027 hay **47 fines de semana** desde febrero; uno ya está confirmado como descanso navideño. El escenario mecánico de volar todos los viernes laborables consumía 45 TT; con estos supuestos, la **previsión razonable es aproximadamente 27–34 TT**, todavía sin comprometer vuelos ni asignar fechas desconocidas. La variación contempla posibles solapamientos de vacaciones/visitas con festivos. Es una estimación, **no** TT aprobados ni saldo disponible.
+- La selección y las estancias unidas se valoran frente al **extremo prudente de la proyección**, no frente a los 45 TT del antiguo escenario irreal. Las fechas específicas de viajes comprados, visitas de Raquel y vacaciones deben confirmarse al construir el calendario real; entonces se sustituye la hipótesis por fechas y necesidades efectivas. Las combinaciones que violen 46 TT o cinco jornadas TT consecutivas sin autorización siguen marcadas como no prioritarias.
 - El impacto real requiere incorporar las reservas, el teletrabajo efectivamente aprobado, días de vacaciones y excepciones. Un permiso parcial por salida temprana se marca como posible necesidad, no como TT seguro.
 
 
@@ -137,7 +138,13 @@ weeks. All weekends inside the horizon are listed in a dated historical-price ra
 
 `config/family_plan.json` records an optional `required_from`/`required_until`
 period and a `weekends` mapping of Saturday ISO date to `pending`, `booked`,
-`covered`, `skipped`, or `unknown`. The family routine starts on **1 February 2027**, confirmed by the user; the first
+`covered`, `skipped`, `unknown`, `vacation`, `visiting_nl` or
+`holiday_break`. The last three, plus `skipped`, disable new flight searches
+for that **confirmed Saturday only**. `forecast_assumptions` holds undated
+holiday weeks, partner-visit cadence and discretionary skips; those values
+change forecasts **without** removing any weekend from the fare tracker.
+To confirm specific dates, enter the Saturday ISO date and appropriate status
+in `weekends` (e.g. `"2027-06-12": "vacation"`). The family routine starts on **1 February 2027**, confirmed by the user; the first
 weekend to cover is **6–7 February**. Purchased flights and deliberate exceptions
 have not been confirmed. Unknown is never
 silently treated as unbooked. Outside-period, purchased, already covered and
@@ -152,8 +159,10 @@ and annual TT/leave allocation. Suggestions require approval of presence and
 remote-work/leave arrangements. They do not consume balances or presume existing
 tickets can be refunded. Overlapping suggestions are alternatives, not additive.
 
-Monthly totals group Saturdays sampled **on that run** and sum the cheapest separate trips for pending
-or unverified weeks only, with priced/total counts; the long-range radar is a separate dated record. They are neither spending
+Monthly totals include the full calendar of pending Saturdays in the monitoring horizon
+and report only observed prices; unqueried weekends count in the denominator so
+a partial month is not presented as a complete budget. Dated vacation, NL family
+visits and holiday breaks are excluded; undated forecast skips are not. They are neither spending
 records nor full trip cost: purchased trips, extras and ground transfers are
 excluded. Weekly detail retains airline/airport/timetable choices. Labour-day
 estimates assume work before departure and conservatively count working return
