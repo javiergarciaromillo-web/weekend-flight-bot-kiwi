@@ -8,7 +8,7 @@ from html import escape
 from pathlib import Path
 
 from src.holidays import workdays_affected, outbound_dates_for_weekend, inbound_dates_for_weekend
-from src.budget import estimate_allocation
+from src.budget import estimate_allocation, trip_work_dates
 
 
 STATES = {'pending', 'booked', 'skipped', 'covered', 'unknown'}
@@ -86,11 +86,16 @@ Only alternatives, never cumulatively reserved or deducted from annual balances.
             saving = separate - trip['total']
             if saving <= 0:
                 continue
-            extra = workdays_affected(trip['outbound'], trip['inbound']) - sum(
-                workdays_affected(w['best']['outbound'], w['best']['inbound']) for w in (first, second))
+            joined_dates, joined_notes = trip_work_dates(trip)
+            separate_days = [d for w in (first, second)
+                             for d in trip_work_dates(w['best'])[0]]
+            extra = len(joined_dates) - len(separate_days)
             result.append(dict(first=first['weekend'], second=second['weekend'], trip=trip,
                                saving=saving, extra_workdays=extra,
-                               allocation=estimate_allocation(trip['outbound'], trip['inbound'])))
+                               joined_tt=len(joined_dates), separate_tt=len(separate_days),
+                               joined_dates=joined_dates, joined_notes=joined_notes,
+                               allocation=estimate_allocation(
+                                   trip['outbound'], trip['inbound'], workdates=joined_dates)))
     # One suggestion per adjacent pair; alternatives can overlap and must not be summed.
     best = {}
     for item in sorted(result, key=lambda i: (-i['saving'], i['extra_workdays'])):
@@ -98,57 +103,151 @@ Only alternatives, never cumulatively reserved or deducted from annual balances.
     return list(best.values())
 
 
+
+def _day(day):
+    labels = ['lun.', 'mar.', 'mié.', 'jue.', 'vie.', 'sáb.', 'dom.']
+    return f'{labels[day.weekday()]} {day.day:02d}/{day.month:02d}'
+
+
+def _flight_details(trip, leg):
+    from datetime import datetime
+    rows = trip.get('out' if leg == 'Ida' else 'inc') or []
+    if not rows:
+        return f'<span style="color:#64748b">{leg}: horario sin verificar</span>'
+    row = min(rows, key=lambda r: r['price'])
+    url = escape(row.get('source_url') or '#', quote=True)
+    times = []
+    for key in ('outbound_departure', 'outbound_arrival'):
+        value = str(row.get(key) or '—')
+        formatted = value
+        for fmt in ('%I:%M %p', '%H:%M'):
+            try:
+                formatted = datetime.strptime(value.replace('+1', '').strip(), fmt).strftime('%H:%M')
+                if '+1' in value:
+                    formatted += ' (+1)'
+                break
+            except ValueError:
+                continue
+        times.append(escape(formatted))
+    route = f"{escape(str(row['origin']))} → {escape(str(row['destination']))}"
+    carrier = escape(str(row.get('airline') or '—'))
+    return (f'<b>{leg}</b> · {route} · {carrier} · '
+            f'<b>{times[0]}–{times[1]}</b> · '
+            f'<a href="{url}" style="color:#2563eb">{row["price"]:.0f} €</a>')
+
+
+def _tt_details(trip):
+    dates, notes = trip_work_dates(trip)
+    if not dates:
+        return 'TT estimado: 0 días', notes
+    return ('TT/permiso a prever: ' + ', '.join(_day(day) for day in dates), notes)
+
+
 def render_coverage(coverage, joins):
-    html = ('<h2 style="font-size:18px">Fines de semana con tu familia</h2>'
-            '<p>Cada semana se planifica por separado: una barata no sustituye a otra. '
-            'Las reservas y excepciones solo se marcan con confirmación.</p>')
+    """Email-friendly weekly cards with dated flights and requested TT dates.
+
+    All working-day estimates are conditional: they are NOT approved TT/leave.
+    """
+    html = ('<h2 style="font-size:19px;margin:20px 0 6px">Próximos fines de semana con tu familia</h2>'
+            '<p style="font-size:12px;color:#64748b;margin:4px 0 12px">'
+            'Cada fin de semana se compara por separado. Los vuelos indicados son '
+            'los más baratos de cada trayecto; confirma tarifa y condiciones. '
+            'Los días TT son orientativos, no permisos aprobados.</p>')
     if not coverage or not all(w['period_confirmed'] for w in coverage):
-        html += '<p><b>Inicio de la rutina familiar pendiente de confirmar.</b> Planificación provisional; no implica que debas comprar todas estas fechas.</p>'
-    monthly = {}
+        html += ('<p><b>Inicio de la rutina familiar pendiente de confirmar.</b> '
+                 'Planificación provisional; no implica que debas comprar todas las fechas.</p>')
+    last_month = None
     for week in coverage:
         state, best, decision = week['state'], week['best'], week['decision']
         if state == 'outside':
             continue
-        label = LABELS[state]
-        html += f'<div style="border-bottom:1px solid #e2e8f0;padding:10px 0"><b>{week["weekend"].isoformat()} · {label}</b>'
+        saturday = week['weekend']
+        month = (saturday.year, saturday.month)
+        if month != last_month:
+            name = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][month[1]-1]
+            html += (f'<h3 style="font-size:15px;color:#334155;border-bottom:2px solid #94a3b8;'
+                     f'padding:14px 0 5px;margin:18px 0 8px">{name.upper()} {month[0]}</h3>')
+            last_month = month
+        label = escape(LABELS[state])
+        html += (f'<div style="border:1px solid #dbe2ea;border-radius:6px;'
+                 f'padding:12px;margin:0 0 12px;background:#fff">'
+                 f'<div style="font-size:15px;margin-bottom:6px"><b>Fin de semana {_day(saturday)}</b>'
+                 f' <span style="font-size:11px;color:#64748b">· {label}</span></div>')
         if state in ('booked', 'covered', 'skipped'):
-            html += '<br>Sin recomendación de nueva compra.</div>'
+            html += '<p style="font-size:12px">Sin recomendación de nueva compra.</p></div>'
             continue
-        bucket = monthly.setdefault(str(week['weekend'])[:7], dict(total=0, priced=0, weeks=0))
-        bucket['weeks'] += 1
-        if best:
-            bucket['total'] += best['total']; bucket['priced'] += 1
-            action = decision.get('action', 'REVISAR OPCIONES')
-            html += (f'<br>Desde {best["total"]:.0f} € · {best["outbound"]} → {best["inbound"]}'
-                     f'<br>{escape(action)}')
-            if state == 'unknown':
-                html += ' (antes, verificar si ya tienes billetes)'
-            if decision:
-                html += f' · revisar {escape(decision["review_on"])} · límite provisional {escape(decision["deadline"])}'
-            html += '<br>Alternativas de esta semana: ' + '; '.join(
-                f'{t["outbound"]} → {t["inbound"]}: {t["total"]:.0f} €' if t['total'] is not None
-                else f'{t["outbound"]} → {t["inbound"]}: sin precio completo' for t in week['choices'])
-        else:
-            html += '<br><b>Sin precio completo: verificar esta semana; no sustituirla por otra.</b>'
+        if not best:
+            html += '<p>Sin precio completo verificado para este fin de semana.</p></div>'
+            continue
+        html += (f'<div style="margin:2px 0 8px;font-size:13px">'
+                 f'<b>Opción más barata: {best["total"]:.0f} €</b>'
+                 f' · {_day(best["outbound"])} → {_day(best["inbound"])}</div>')
+        if decision:
+            html += (f'<div style="font-size:11px;color:#475569;margin-bottom:8px">'
+                     f'{escape(decision.get("action", "REVISAR"))}'
+                     f' · Revisar: {escape(str(decision.get("review_on", "—")))}'
+                     f' · Límite provisional: {escape(str(decision.get("deadline", "—")))}</div>')
+        if state == 'unknown':
+            html += ('<p style="font-size:11px;color:#64748b;margin:4px 0">'
+                     'Reserva aún sin verificar: confirma si ya tienes billetes.</p>')
+        ordered = sorted(week['choices'],
+                         key=lambda t: (t['total'] is None, t['total'] or 0,
+                                        t['outbound'], t['inbound']))
+        for index, choice in enumerate(ordered):
+            highlighted = index == 0 and choice['total'] is not None
+            heading = 'MEJOR PRECIO' if highlighted else 'Alternativa'
+            border = '2px solid #cbd5e1' if highlighted else '1px solid #edf1f5'
+            datestr = f'{_day(choice["outbound"])} → {_day(choice["inbound"])}'
+            amount = f'{choice["total"]:.0f} €' if choice['total'] is not None else 'Sin precio completo'
+            html += (f'<div style="border-top:{border};padding:8px 0 7px">'
+                     f'<div style="font-size:12px"><b>{heading}</b> · {datestr} '
+                     f'· <b>{amount}</b></div>')
+            html += ('<div style="font-size:12px;line-height:1.6;padding-left:8px">'
+                     + _flight_details(choice, 'Ida') + '<br>'
+                     + _flight_details(choice, 'Vuelta') + '</div>')
+            dates_line, notes = _tt_details(choice)
+            html += f'<div style="font-size:11px;color:#475569;padding-left:8px">{escape(dates_line)}</div>'
+            if notes:
+                html += ('<div style="font-size:10px;color:#64748b;padding-left:8px">'
+                         + ' '.join(escape(note) for note in notes) + '</div>')
+            html += '</div>'
         html += '</div>'
-    html += '<h3>Presupuesto orientativo por mes</h3>'
-    for month, bucket in sorted(monthly.items()):
-        html += (f'<p>{month}: {bucket["total"]:.0f} € para {bucket["priced"]}/{bucket["weeks"]} fines de semana '
-                 'pendientes o sin verificar, con precio observado.</p>')
-    html += '<p>Estimación con viajes separados, agrupada por sábado; no es gasto contratado. Excluye billetes ya comprados, traslados y extras. Puede haber cobertura de búsqueda parcial.</p>'
+
     if joins:
-        html += '<h3>Unir dos fines de semana</h3>'
+        html += ('<h2 style="font-size:18px;margin:24px 0 6px">Unir dos fines de semana</h2>'
+                 '<p style="font-size:12px;color:#64748b">'
+                 'Compara una estancia larga frente a dos viajes independientes. '
+                 'TT extra = días estimados de trabajo desde España con la estancia '
+                 'unida, menos los dos viajes separados (no es un saldo aprobado).</p>')
         for item in joins:
             trip = item['trip']
-            allocations = '; '.join(f'{year}: {a["remote"]} TT / {a["leave"]} vacaciones'
-                                     + (' (saldo sin verificar)' if not a['verified'] else '')
-                                     + (f' / {a["uncovered"]} días sin cubrir' if a['uncovered'] else '')
-                                     for year, a in item['allocation'].items())
-            html += (f'<p><b>{trip["outbound"]} → {trip["inbound"]}: {trip["total"]:.0f} €</b><br>'
-                     f'Cubre los fines de semana {item["first"]} y {item["second"]}; '
-                     f'ahorro observado de {item["saving"]:.0f} € frente a dos viajes separados, evitando dos trayectos.<br>'
-                     f'{item["extra_workdays"]} laborables adicionales a organizar; {allocations}.</p>')
-        html += ('<p>Solo si puedes permanecer en España entre ambos fines de semana y no tienes ya esos vuelos comprados. '
-                 'Requiere confirmar teletrabajo/vacaciones y presencia en NL. Alternativas solapadas: no sumar sus ahorros ni sus cupos. '
-                 'El cálculo de laborables supone trabajar antes de la ida; una salida temprana puede requerir otro día.</p>')
+            allocations = '; '.join(
+                f'{year}: {a["remote"]} TT / {a["leave"]} vacaciones'
+                + (' (saldo sin verificar)' if not a['verified'] else '')
+                + (f' / {a["uncovered"]} sin cubrir' if a['uncovered'] else '')
+                for year, a in item['allocation'].items()
+            )
+            count = item['extra_workdays']
+            count_label = f'+{count}' if count > 0 else str(count)
+            tt_dates = ', '.join(_day(day) for day in item['joined_dates'])
+            html += (f'<div style="border:1px solid #dbe2ea;border-radius:6px;'
+                     f'padding:11px;margin:10px 0">'
+                     f'<b>{_day(trip["outbound"])} → {_day(trip["inbound"])} · '
+                     f'{trip["total"]:.0f} €</b><br>'
+                     f'<span style="font-size:12px">Cubre los fines de semana '
+                     f'{_day(item["first"])} y {_day(item["second"])} · '
+                     f'ahorro observado {item["saving"]:.0f} € frente a dos viajes '
+                     f'(evitas dos trayectos).</span><br>'
+                     f'<span style="font-size:12px"><b>TT estimado:</b> '
+                     f'dos viajes {item["separate_tt"]} días → estancia unida '
+                     f'{item["joined_tt"]} días <b>({count_label} TT adicionales)</b></span><br>'
+                     f'<span style="font-size:11px;color:#475569">Días de TT/permiso en '
+                     f'la estancia unida: {escape(tt_dates) if tt_dates else "ninguno"}. '
+                     f'Asignación orientativa: {escape(allocations)}.</span>'
+                     f'</div>')
+        html += ('<p style="font-size:11px;color:#64748b">'
+                 'Alternativas que pueden solaparse: no sumes ahorros ni días TT. '
+                 'Las salidas tempranas del viernes pueden requerir TT o permiso parcial. '
+                 'Para estancias largas habría que coordinar TT/vacaciones y presencia en NL.</p>')
     return html
