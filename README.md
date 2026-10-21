@@ -55,6 +55,16 @@ Se consideran 46 días de teletrabajo desde España y 30 días de vacaciones por
 
 El usuario confirma los cupos completos para 2027: 46 días de teletrabajo y 30 de vacaciones. Los días adicionales arrastrados desde 2026 están pendientes de cuantificar y no se incluyen. El saldo de 2026 continúa sin verificar.
 
+### Restricciones de teletrabajo y autorizaciones
+
+- **46 TT en total para el año 2027**, compartidos por todos los viajes. No son 46 por viaje; el bot no afirma conocer el saldo restante sin registros de TT aprobados y consumidos.
+- **Máximo ordinario: cinco jornadas de TT consecutivas**. Una secuencia de viernes TT y lunes TT no se considera interrumpida solo por el fin de semana; los días festivos intermedios tampoco reinician la secuencia. Superar cinco jornadas consecutivas requiere autorización especial o reorganización efectiva con vacaciones.
+- La selección de alternativas y las estancias unidas da prioridad a opciones compatibles con el límite de cinco jornadas. Las que lo exceden se muestran como **no prioritarias** con advertencia explícita; el bot no tramita ni presupone autorizaciones.
+- El informe añade una **proyección orientativa** de consumo anual para 2027: supone un viernes TT por cada fin de semana familiar (excepto viernes festivos NCIA). Del 1 de febrero al 31 de diciembre de 2027 aparecen 47 fines de semana, y el escenario de referencia consume 45 de los 46 TT. Este escenario no equivale a reservas, autorización, compromiso de volar o saldo real.
+- A esa base se sustituyen los TT necesarios de los fines de semana actualmente consultados y se indica cuándo el escenario combinado supera 46 días. Las estancias que unen dos fines de semana sustituyen ambos viernes de referencia, para que no se atribuyan cupos duplicados.
+- El impacto real requiere incorporar las reservas, el teletrabajo efectivamente aprobado, días de vacaciones y excepciones. Un permiso parcial por salida temprana se marca como posible necesidad, no como TT seguro.
+
+
 ## Weekly family travel: preparation phase
 
 The objective is to cover each necessary weekend with family in Spain, not select occasional cheap trips. The report records a daily decision for each date alternative and presents a chronological weekend coverage view. It retains the
