@@ -9,7 +9,8 @@ from pathlib import Path
 
 from src.holidays import workdays_affected, outbound_dates_for_weekend, inbound_dates_for_weekend
 from src.budget import (estimate_allocation, trip_work_dates, assess_remote_plan,
-                        REMOTE_WORK_DAYS, MAX_CONSECUTIVE_REMOTE_DAYS)
+                        REMOTE_WORK_DAYS, MAX_CONSECUTIVE_REMOTE_DAYS,
+                        annual_tt_outlook, projected_annual_tt)
 
 
 STATES = {'pending', 'booked', 'skipped', 'covered', 'unknown'}
@@ -56,16 +57,22 @@ def build_coverage(trips, decisions, plan=None):
             continue
         groups.setdefault(saturday, []).append(trip)
     result = []
+    annual_outlook = annual_tt_outlook(plan)
     for week, choices in sorted(groups.items()):
         key = str(week)
         in_period = (not plan.get('required_from') or key >= plan['required_from']) and (not plan.get('required_until') or key <= plan['required_until'])
         state = plan.get('weekends', {}).get(key, 'unknown') if in_period else 'outside'
         # Prefer standard-approval-compatible trips over a cheaper itinerary
         # requiring more than five consecutive days of remote work.
+        def risk_key(t):
+            dates, _ = trip_work_dates(t)
+            streak = assess_remote_plan(dates)['requires_special_authorisation']
+            annual = projected_annual_tt(dates, [week], annual_outlook)
+            cap_risk = bool(annual and annual['exceeds_cap'])
+            return (streak or cap_risk, streak, cap_risk, t['total'])
+
         available = sorted((t for t in choices if t['total'] is not None),
-                           key=lambda t: (
-                               assess_remote_plan(trip_work_dates(t)[0])['requires_special_authorisation'],
-                               t['total']))
+                           key=risk_key)
         best = available[0] if available else None
         result.append(dict(weekend=week, state=state, choices=choices, best=best,
                            period_confirmed=bool(plan.get('required_from')),
@@ -73,7 +80,7 @@ def build_coverage(trips, decisions, plan=None):
     return result
 
 
-def join_opportunities(coverage, trips):
+def join_opportunities(coverage, trips, annual_outlook=None):
     """Compare complete two-weekend prices against two separate cheapest trips.
 
 Only alternatives, never cumulatively reserved or deducted from annual balances.
@@ -97,17 +104,22 @@ Only alternatives, never cumulatively reserved or deducted from annual balances.
                              for d in trip_work_dates(w['best'])[0]]
             extra = len(joined_dates) - len(separate_days)
             assessment = assess_remote_plan(joined_dates)
+            annual_projection = projected_annual_tt(
+                joined_dates, [first['weekend'], second['weekend']], annual_outlook)
             result.append(dict(first=first['weekend'], second=second['weekend'], trip=trip,
                                saving=saving, extra_workdays=extra,
                                joined_tt=len(joined_dates), separate_tt=len(separate_days),
                                joined_dates=joined_dates, joined_notes=joined_notes,
                                longest_streak=assessment['longest_consecutive_tt'],
                                needs_special_authorisation=assessment['requires_special_authorisation'],
+                               annual_projection=annual_projection,
                                allocation=estimate_allocation(
                                    trip['outbound'], trip['inbound'], workdates=joined_dates)))
     # One suggestion per adjacent pair; alternatives can overlap and must not be summed.
     best = {}
     for item in sorted(result, key=lambda i: (
+            i['needs_special_authorisation'] or bool(i['annual_projection'] and
+                                                    i['annual_projection']['exceeds_cap']),
             i['needs_special_authorisation'], -i['saving'], i['extra_workdays'])):
         best.setdefault(item['first'], item)
     return list(best.values())
@@ -205,9 +217,14 @@ def render_coverage(coverage, joins, annual_outlook=None):
             html += '<p>Sin precio completo verificado para este fin de semana.</p></div>'
             continue
         best_assessment = assess_remote_plan(trip_work_dates(best)[0])
+        def option_risk(option):
+            dates = trip_work_dates(option)[0]
+            a = assess_remote_plan(dates)
+            year_projection = projected_annual_tt(dates, [saturday], annual_outlook)
+            return (a['requires_special_authorisation'] or
+                    bool(year_projection and year_projection['exceeds_cap']))
         best_label = ('Opción viable priorizada' if any(
-            assess_remote_plan(trip_work_dates(t)[0])['requires_special_authorisation']
-            for t in week['choices'] if t['total'] is not None)
+            option_risk(t) for t in week['choices'] if t['total'] is not None)
             else 'Opción más barata')
         html += (f'<div style="margin:2px 0 8px;font-size:13px">'
                  f'<b>{best_label}: {best["total"]:.0f} €</b>'
@@ -221,15 +238,17 @@ def render_coverage(coverage, joins, annual_outlook=None):
             html += ('<p style="font-size:11px;color:#64748b;margin:4px 0">'
                      'Reserva aún sin verificar: confirma si ya tienes billetes.</p>')
         ordered = sorted(week['choices'],
-                         key=lambda t: (
-                             t['total'] is None,
-                             assess_remote_plan(trip_work_dates(t)[0])['requires_special_authorisation'],
-                             t['total'] or 0, t['outbound'], t['inbound']))
+                         key=lambda t: (t['total'] is None, option_risk(t),
+                                        t['total'] or 0, t['outbound'], t['inbound']))
         for index, choice in enumerate(ordered):
             highlighted = index == 0 and choice['total'] is not None
-            status = assess_remote_plan(trip_work_dates(choice)[0])
+            chosen_tt_dates = trip_work_dates(choice)[0]
+            status = assess_remote_plan(chosen_tt_dates)
+            annual_scenario = projected_annual_tt(chosen_tt_dates, [saturday], annual_outlook)
             heading = ('OPCIÓN PRIORITARIA' if highlighted else
                        'REQUIERE AUTORIZACIÓN ESPECIAL' if status['requires_special_authorisation']
+                       else 'SUPERA CUPO EN ESCENARIO ANUAL' if
+                       annual_scenario and annual_scenario['exceeds_cap']
                        else 'Alternativa')
             border = '2px solid #cbd5e1' if highlighted else '1px solid #edf1f5'
             datestr = f'{_day(choice["outbound"])} → {_day(choice["inbound"])}'
@@ -251,6 +270,16 @@ def render_coverage(coverage, joins, annual_outlook=None):
                 html += ('<div style="font-size:11px;color:#9a3412;padding-left:8px">'
                          '<b>No prioritaria:</b> más de cinco jornadas TT seguidas; '
                          'solo con autorización especial o reorganizando con vacaciones.</div>')
+            if annual_scenario:
+                note = ' · EXCESO TEÓRICO' if annual_scenario['exceeds_cap'] else ''
+                html += (f'<div style="font-size:11px;color:#475569;padding-left:8px">'
+                         f'Proyección 2027 si el resto de fines de semana sigue el '
+                         f'escenario base: <b>{annual_scenario["projected"]}/'
+                         f'{REMOTE_WORK_DAYS} TT</b>{note}. No es saldo real.</div>')
+                if annual_scenario['exceeds_cap']:
+                    html += ('<div style="font-size:11px;color:#9a3412;padding-left:8px">'
+                             '<b>No prioritaria:</b> supera 46 TT en el escenario '
+                             'anual; elegir menos TT o combinar con vacaciones.</div>')
             if notes:
                 html += ('<div style="font-size:10px;color:#64748b;padding-left:8px">'
                          + ' '.join(escape(note) for note in notes) + '</div>')
@@ -274,6 +303,7 @@ def render_coverage(coverage, joins, annual_outlook=None):
             count = item['extra_workdays']
             count_label = f'+{count}' if count > 0 else str(count)
             special = item.get('needs_special_authorisation', False)
+            annual_join = item.get('annual_projection')
             warning = ('<br><b style="color:#9a3412">NO PRIORITARIA: '
                        'requiere autorización especial por superar '
                        'cinco jornadas TT consecutivas, '
@@ -298,7 +328,12 @@ def render_coverage(coverage, joins, annual_outlook=None):
                      f'<br><span style="font-size:11px">Racha máxima: '
                      f'{item.get("longest_streak", "—")}/{MAX_CONSECUTIVE_REMOTE_DAYS} jornadas TT. '
                      f'Cupo anual compartido: {REMOTE_WORK_DAYS} días.</span>'
-                     + warning + '</div>')
+                     + warning
+                     + (f'<br><b style="color:#9a3412">Exceso teórico de cupo anual: '
+                        f'{annual_join["projected"]}/{REMOTE_WORK_DAYS} TT'
+                        f'. Evitar como opción ordinaria o utilizar vacaciones.</b>'
+                        if annual_join and annual_join['exceeds_cap'] else '')
+                     + '</div>')
         html += ('<p style="font-size:11px;color:#64748b">'
                  'Alternativas que pueden solaparse: no sumes ahorros ni días TT. '
                  'Las salidas tempranas del viernes pueden requerir TT o permiso parcial. '
