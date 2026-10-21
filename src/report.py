@@ -101,6 +101,49 @@ def _horizon_radar(tracking, daily_saturdays=()):
                  f'<b>Fin de semana {date_label}</b><br>{status}</div>')
     return html
 
+def _monthly_budget(tracking, coverage, family_plan=None):
+    """Budget from all known weekends, not merely those sampled today."""
+    plan = family_plan or {}
+    weeks = ([(r['weekend'], r['best_price']) for r in tracking] if tracking
+             else [(w['weekend'], w['best']['total'] if w['best'] else None)
+                   for w in coverage])
+    monthly = {}
+    for saturday, price in weeks:
+        key = saturday.isoformat()
+        if ((plan.get('required_from') and key < plan['required_from'])
+                or (plan.get('required_until') and key > plan['required_until'])):
+            continue
+        if plan.get('weekends', {}).get(key) in ('booked', 'covered', 'skipped'):
+            continue
+        bucket = monthly.setdefault((saturday.year, saturday.month),
+                                    {'subtotal': 0, 'priced': 0, 'total': 0})
+        bucket['total'] += 1
+        if price is not None:
+            bucket['priced'] += 1
+            bucket['subtotal'] += price
+    if not monthly:
+        return ''
+    html = ('<h2 style="font-size:18px;margin:28px 0 8px">'
+            'Presupuesto orientativo por mes</h2>'
+            '<p style="font-size:12px;color:#64748b">'
+            'Total de fines de semana del mes dentro de la ventana de seguimiento. '
+            'Solo se suman aquellos con precio observado: un mes incompleto '
+            'no representa su presupuesto total.</p>')
+    for (year, month), b in sorted(monthly.items()):
+        complete = b['priced'] == b['total']
+        label = 'Cobertura de fechas completa' if complete else 'PARCIAL'
+        amount = _price(b['subtotal']) if b['priced'] else '—'
+        html += (f'<div style="padding:8px 0;border-bottom:1px solid #e2e8f0;'
+                 f'font-size:12px"><b>{MONTHS[month-1].upper()} {year}</b> · '
+                 f'{b["priced"]}/{b["total"]} fines de semana con precio · '
+                 f'<b>{amount}</b> <span style="color:#64748b">({label})</span></div>')
+    html += ('<p style="font-size:11px;color:#64748b">'
+             'Suma de viajes separados, no gasto contratado. Los precios lejanos '
+             'pueden ser antiguos. Sin vuelos comprados, transporte ni extras. '
+             'Las estancias unidas se analizan aparte.</p>')
+    return html
+
+
 def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=None,
                       family_plan=None, horizon_tracking=None, daily_saturdays=()):
     diagnostics = diagnostics or {}
@@ -285,6 +328,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
     if failed:
         html += '<h2 style="font-size:16px;margin-top:24px">Consultas sin verificar</h2><p style="font-size:12px">'
         html += '<br>'.join(f'{escape(o)}→{escape(d)} · {_fmt_day(day)}' for (o, d, day), _ in sorted(failed)) + '</p>'
+    html += _monthly_budget(horizon_tracking, coverage, family_plan)
     used_holidays = sorted({d for t in bridges for d in holiday_dates(t['outbound'], t['inbound'])})
     html += ('<div style="border-top:1px solid #e2e8f0;margin-top:24px;padding-top:12px;'
              'font-size:11px;color:#64748b"><b>Cómo leer el informe</b><br>'
