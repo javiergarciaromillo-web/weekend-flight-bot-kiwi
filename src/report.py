@@ -328,21 +328,54 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                      f'{workdays_affected(t["outbound"], t["inbound"])} laborables, {_price(t["total"])}.</p>')
         html += table(bridges)
 
-    opportunities = [o for o in get_latest_learning_opportunities(limit=100)
-                     if o['run_date'] == str(run_date) and o['outbound'] >= str(run_date)
-                     and allowed_pair(date.fromisoformat(o['outbound']), date.fromisoformat(o['inbound']))][:3]
+    available_opportunities = [o for o in get_latest_learning_opportunities(limit=100)
+                               if o['run_date'] == str(run_date)
+                               and o['outbound'] >= str(run_date)
+                               and allowed_pair(date.fromisoformat(o['outbound']),
+                                                date.fromisoformat(o['inbound']))]
+    # One cheapest representative per family weekend, rather than three near-identical
+    # combinations for the same date.
+    by_weekend = {}
+    for item in available_opportunities:
+        saturday = weekend_of(date.fromisoformat(item['outbound']))
+        if saturday in set(daily_saturdays):
+            continue
+        if saturday not in by_weekend or item['best_combo'] < by_weekend[saturday]['best_combo']:
+            by_weekend[saturday] = item
+    opportunities = sorted(
+        sorted(by_weekend.items(), key=lambda pair: pair[1]['best_combo'])[:5]
+    )
     if opportunities:
-        html += '<h2 style="font-size:18px;margin-top:24px">Precios a más largo plazo</h2>'
-        for item in opportunities:
-            html += (f'<p><b>{_fmt_day(item["outbound"])} → {_fmt_day(item["inbound"])} · '
-                     f'{_price(item["best_combo"])}</b><br>')
+        html += ('<h2 style="font-size:18px;margin:25px 0 6px">'
+                 'Oportunidades observadas a largo plazo</h2>'
+                 '<p style="font-size:12px;color:#64748b">'
+                 'Una opción por fin de semana, con horarios y precios '
+                 'observados hoy; confirmar disponibilidad antes de comprar.</p>')
+        month = None
+        for saturday, item in opportunities:
+            current = (saturday.year, saturday.month)
+            if current != month:
+                html += (f'<h3 style="font-size:14px;margin:18px 0 7px;'
+                         f'padding:8px 0;border-bottom:2px solid #94a3b8">'
+                         f'{MONTHS[current[1]-1].upper()} {current[0]}</h3>')
+                month = current
+            html += (f'<div style="border:1px solid #dbe2ea;'
+                     f'padding:10px 12px;margin:8px 0;font-size:12px">'
+                     f'<b>Fin de semana {saturday.day:02d}/{saturday.month:02d}</b><br>'
+                     f'{_fmt_day(item["outbound"])} → {_fmt_day(item["inbound"])} · '
+                     f'<b>{_price(item["best_combo"])}</b><br>')
             for leg in ['outbound', 'inbound']:
-                row = dict(origin=item.get(f'{leg}_origin') or '—', destination=item.get(f'{leg}_destination') or '—',
-                           airline=item.get(f'{leg}_airline'), outbound_departure=item.get(f'{leg}_departure_time'),
-                           outbound_arrival=item.get(f'{leg}_arrival_time'), price=item.get(f'best_{leg}'),
+                row = dict(origin=item.get(f'{leg}_origin') or '—',
+                           destination=item.get(f'{leg}_destination') or '—',
+                           airline=item.get(f'{leg}_airline'),
+                           outbound_departure=item.get(f'{leg}_departure_time'),
+                           outbound_arrival=item.get(f'{leg}_arrival_time'),
+                           price=item.get(f'best_{leg}'),
                            source_url=item.get(f'{leg}_source_url'))
-                html += flight_line(row) + '<br>'
-            html += '</p>'
+                html += (f'<div style="padding:4px 0">'
+                         f'<b>{"IDA" if leg == "outbound" else "VUELTA"}</b> · '
+                         + flight_line(row) + '</div>')
+            html += '</div>'
 
     if failed:
         html += '<h2 style="font-size:16px;margin-top:24px">Consultas sin verificar</h2><p style="font-size:12px">'
