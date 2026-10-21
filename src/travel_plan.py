@@ -5,7 +5,7 @@ Only Saturday-specific confirmed statuses can suppress a weekend.
 """
 from datetime import date
 
-NO_TRAVEL_STATES = frozenset({'skipped', 'visiting_nl', 'vacation'})
+NO_TRAVEL_STATES = frozenset({'skipped', 'visiting_nl', 'vacation', 'holiday_break'})
 ALL_STATES = frozenset({'pending', 'booked', 'covered', 'unknown'}) | NO_TRAVEL_STATES
 
 DEFAULT_FORECAST = {
