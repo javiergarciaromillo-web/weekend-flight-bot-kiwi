@@ -3,7 +3,7 @@
 These are annual allowances, not verified remaining balances. Estimates for
 separate trips must not be added when their dates overlap.
 """
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from src.holidays import is_free_day
 
 REMOTE_WORK_DAYS = 46
@@ -130,6 +130,29 @@ def annual_tt_outlook(plan, year=2027):
     return dict(year=year, weekends=weekends, baseline_tt=baseline,
                 cap=REMOTE_WORK_DAYS, margin=REMOTE_WORK_DAYS-baseline,
                 verified_remaining=False)
+
+
+def projected_annual_tt(workdates, saturdays, outlook):
+    """Sensitivity test for alternatives against the 1-Friday-TT annual baseline.
+
+    Not a running booked/approved balance. It substitutes the proposal's TT
+    dates for the corresponding Saturdays in an illustrative full-year plan.
+    """
+    if not outlook:
+        return None
+    year = outlook['year']
+    unique_saturdays = {sat for sat in saturdays if sat.year == year
+                        and sat >= date(year, 1, 1)}
+    originally_expected = sum(
+        int(not is_free_day(saturday - timedelta(days=1)))
+        for saturday in unique_saturdays
+    )
+    proposed = sum(day.year == year for day in set(workdates))
+    total = outlook['baseline_tt'] - originally_expected + proposed
+    return dict(projected=total, annual_cap=outlook['cap'],
+                additional=proposed - originally_expected,
+                exceeds_cap=total > outlook['cap'],
+                model_only=True)
 
 
 def estimate_allocation(outbound, inbound, remaining_by_year=None, workdates=None):
