@@ -19,6 +19,7 @@ STATES = ALL_STATES
 LABELS = {'pending': 'Pendiente de comprar', 'booked': 'Comprado',
           'skipped': 'Excepción: no viajar', 'covered': 'Cubierto por estancia',
           'vacation': 'Vacaciones: sin vuelo semanal',
+          'holiday_break': 'Cierre NCIA: sin vuelo semanal',
           'visiting_nl': 'Familia en Países Bajos: sin vuelo semanal',
           'unknown': 'Reserva sin verificar'}
 
@@ -230,7 +231,7 @@ def render_coverage(coverage, joins, annual_outlook=None):
                  f'padding:12px;margin:0 0 12px;background:#fff">'
                  f'<div style="font-size:15px;margin-bottom:6px"><b>Fin de semana {_day(saturday)}</b>'
                  f' <span style="font-size:11px;color:#64748b">· {label}</span></div>')
-        if state in ('booked', 'covered', 'skipped', 'vacation', 'visiting_nl'):
+        if state in ('booked', 'covered', 'skipped', 'vacation', 'visiting_nl', 'holiday_break'):
             html += '<p style="font-size:12px">Sin recomendación de nueva compra.</p></div>'
             continue
         if not best:
