@@ -299,8 +299,10 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
     if daily_saturdays:
         daily = set(daily_saturdays)
         coverage = [week for week in coverage if week['weekend'] in daily]
-    html += render_coverage(coverage, join_opportunities(coverage, trips),
-                            annual_outlook=annual_tt_outlook(family_plan))
+    annual_outlook = annual_tt_outlook(family_plan)
+    html += render_coverage(coverage,
+                            join_opportunities(coverage, trips, annual_outlook),
+                            annual_outlook=annual_outlook)
     if horizon_tracking:
         html += _horizon_radar(horizon_tracking, daily_saturdays)
     if decisions:
