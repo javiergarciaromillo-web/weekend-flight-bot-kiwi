@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from src.holidays import is_free_day
 
 REMOTE_WORK_DAYS = 46
+MAX_CONSECUTIVE_REMOTE_DAYS = 5
 ANNUAL_LEAVE_DAYS = 30
 
 # User confirmed full 2027 allowances; additional carried leave is unquantified.
@@ -60,6 +61,75 @@ def trip_work_dates(trip):
             required.discard(inc)
             notes.append('Regreso con llegada a NL antes de las 09:00: no se cuenta TT ese día.')
     return sorted(required), notes
+
+
+def consecutive_remote_days(dates):
+    """Longest uninterrupted block of teleworking WORKDAYS.
+
+    Weekends and NCIA holidays do not by themselves reset a block of TT: a
+    Friday followed by the next Monday is a continuous workday sequence.
+    An unassigned *working* day between TT dates interrupts the block.
+    Treat all 'TT/leave to organise' dates as TT until actual leave is known.
+    """
+    ordered = sorted(set(dates))
+    longest = run = 0
+    previous = None
+    for day in ordered:
+        if previous is not None:
+            between = [previous + timedelta(days=i)
+                       for i in range(1, (day-previous).days)]
+            run = run + 1 if all(is_free_day(other) for other in between) else 1
+        else:
+            run = 1
+        longest = max(longest, run)
+        previous = day
+    return longest
+
+
+def assess_remote_plan(dates):
+    """Individual scenario review; never claim remaining annual balances."""
+    by_year = {}
+    for day in sorted(set(dates)):
+        by_year[day.year] = by_year.get(day.year, 0) + 1
+    longest = consecutive_remote_days(dates)
+    return {
+        'tt_days': len(set(dates)),
+        'longest_consecutive_tt': longest,
+        'requires_special_authorisation': longest > MAX_CONSECUTIVE_REMOTE_DAYS,
+        'annual_cap': REMOTE_WORK_DAYS,
+        'annual_excess_in_scenario': {
+            year: max(0, count - REMOTE_WORK_DAYS) for year, count in by_year.items()
+        },
+    }
+
+
+def annual_tt_outlook(plan, year=2027):
+    """Rough yearly baseline: one Friday working remotely for each family weekend.
+
+    Excludes explicitly skipped weekends and NCIA-holiday Fridays. It is NOT a
+    booking record, approved TT schedule, or proof of enough remaining days.
+    """
+    from datetime import date
+    if not plan or not plan.get('required_from'):
+        return None
+    start = max(date.fromisoformat(plan['required_from']), date(year, 1, 1))
+    end = min(date.fromisoformat(plan['required_until'])
+              if plan.get('required_until') else date(year, 12, 31),
+              date(year, 12, 31))
+    if start > end:
+        return None
+    saturday = start + timedelta(days=(5-start.weekday()) % 7)
+    weekends = 0
+    baseline = 0
+    while saturday <= end:
+        if plan.get('weekends', {}).get(str(saturday)) != 'skipped':
+            weekends += 1
+            friday = saturday - timedelta(days=1)
+            baseline += int(not is_free_day(friday))
+        saturday += timedelta(days=7)
+    return dict(year=year, weekends=weekends, baseline_tt=baseline,
+                cap=REMOTE_WORK_DAYS, margin=REMOTE_WORK_DAYS-baseline,
+                verified_remaining=False)
 
 
 def estimate_allocation(outbound, inbound, remaining_by_year=None, workdates=None):
