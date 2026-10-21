@@ -9,9 +9,9 @@ from src.family import build_coverage, render_coverage
 
 def sample(out, back, amount=100):
     return dict(outbound=out, inbound=back, total=amount,
-                out=[dict(price=40, outbound_departure='17:00',
+                out=[dict(origin='AMS', destination='BCN', airline='Vueling', price=40, outbound_departure='17:00',
                           outbound_arrival='19:00')],
-                inc=[dict(price=60, outbound_departure='17:00',
+                inc=[dict(origin='BCN', destination='AMS', airline='Vueling', price=60, outbound_departure='17:00',
                           outbound_arrival='19:00')])
 
 
