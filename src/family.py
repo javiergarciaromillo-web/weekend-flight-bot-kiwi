@@ -185,16 +185,42 @@ def render_coverage(coverage, joins, annual_outlook=None):
         overview = annual_outlook
         margin = overview['margin']
         tone = '#9a3412' if margin <= 3 else '#475569'
-        html += (f'<p style="font-size:12px;border-left:3px solid #64748b;'
-                 f'padding:8px 11px;margin:10px 0;color:{tone}">'
-                 f'<b>Cupo anual de TT {overview["year"]}: {REMOTE_WORK_DAYS} días.</b> '
-                 f'Escenario de referencia (un viernes TT por fin de semana salvo festivos): '
-                 f'<b>{overview["baseline_tt"]} días</b> para '
-                 f'{overview["weekends"]} fines de semana · margen teórico '
-                 f'{margin:+d} días. No es el consumo real ni el saldo restante; '
-                 f'faltan las reservas, vacaciones y TT ya aprobados. '
-                 f'Máximo ordinario: {MAX_CONSECUTIVE_REMOTE_DAYS} jornadas TT '
-                 'seguidas; superar ese límite exige autorización especial.</p>')
+        if overview.get('forecast_used'):
+            html += (f'<p style="font-size:12px;border-left:3px solid #64748b;'
+                     f'padding:8px 11px;margin:10px 0;color:#475569">'
+                     f'<b>Cupo anual TT {overview["year"]}: '
+                     f'{REMOTE_WORK_DAYS} días.</b> '
+                     f'Calendario: {overview["calendar_weekends"]} fines de semana, '
+                     f'{overview["confirmed_no_flight_weekends"]} ya excluido(s) '
+                     f'con fecha. '
+                     f'<b>Previsión flexible: {overview["scenario_min_tt"]}–'
+                     f'{overview["scenario_max_tt"]} TT</b>, frente a '
+                     f'{overview["all_weekend_baseline_tt"]} TT si volaras '
+                     f'todos los fines de semana laborables. '
+                     f'El escenario descuenta {overview["assumed_vacation_weeks"]} '
+                     f'semanas de vacaciones sin fecha asignada, '
+                     f'{overview["assumed_partner_visits_min"]}–'
+                     f'{overview["assumed_partner_visits_max"]} visitas de '
+                     f'tu familia a NL y '
+                     f'{overview["assumed_other_skips_min"]}–'
+                     f'{overview["assumed_other_skips_max"]} fines de semana '
+                     f'sin viaje adicionales (estos últimos son una hipótesis). '
+                     'Enero queda fuera del periodo. Los viernes festivos NCIA '
+                     'ya están excluidos del TT; no se descuentan dos veces. '
+                     'Esto NO constituye un calendario de viajes ni un saldo '
+                     f'aprobado. Límite habitual: '
+                     f'{MAX_CONSECUTIVE_REMOTE_DAYS} días TT seguidos.</p>')
+        else:
+            html += (f'<p style="font-size:12px;border-left:3px solid #64748b;'
+                     f'padding:8px 11px;margin:10px 0;color:{tone}">'
+                     f'<b>Cupo anual TT {overview["year"]}: '
+                     f'{REMOTE_WORK_DAYS} días.</b> '
+                     f'Escenario sin fines de semana de descanso: '
+                     f'<b>{overview["baseline_tt"]} días</b> para '
+                     f'{overview["weekends"]} fines de semana · margen teórico '
+                     f'{margin:+d}. No es saldo real ni TT autorizado. '
+                     f'Máximo ordinario: {MAX_CONSECUTIVE_REMOTE_DAYS} '
+                     'jornadas consecutivas.</p>')
         selected_forecast = projected_selection_tt(coverage, overview)
         if selected_forecast and selected_forecast['priced_weeks']:
             future = selected_forecast['projected']
