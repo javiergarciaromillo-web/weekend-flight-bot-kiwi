@@ -155,6 +155,34 @@ def projected_annual_tt(workdates, saturdays, outlook):
                 model_only=True)
 
 
+def projected_selection_tt(coverage, outlook):
+    """Combine the priced, unbooked weekly alternatives against the yearly baseline.
+
+    Unknown/booked coverage is NOT confirmed: this is an illustrative
+    sensitivity result, not an annual TT ledger or approved balance.
+    """
+    if not outlook:
+        return None
+    added = 0
+    considered = 0
+    for week in coverage:
+        saturday = week['weekend']
+        if saturday.year != outlook['year'] or week.get('state') not in ('pending', 'unknown'):
+            continue
+        best = week.get('best')
+        if not best:
+            continue
+        dates = trip_work_dates(best)[0]
+        base = int(not is_free_day(saturday - timedelta(days=1)))
+        days = sum(day.year == outlook['year'] for day in set(dates))
+        added += days - base
+        considered += 1
+    projected = outlook['baseline_tt'] + added
+    return dict(projected=projected, annual_cap=outlook['cap'],
+                deviation_from_baseline=added, priced_weeks=considered,
+                exceeds_cap=projected > outlook['cap'], model_only=True)
+
+
 def estimate_allocation(outbound, inbound, remaining_by_year=None, workdates=None):
     """Prefer remote work to preserve leave, split at calendar-year boundaries.
 
