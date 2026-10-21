@@ -426,6 +426,7 @@ def get_horizon_tracking(saturdays, since=None):
     """
     from datetime import date, timedelta
     from src.family import weekend_of
+    from src.holidays import outbound_dates_for_weekend, inbound_dates_for_weekend
     from src.planner import FILTER_HISTORY_START
 
     start = str(since or FILTER_HISTORY_START)
@@ -446,7 +447,11 @@ def get_horizon_tracking(saturdays, since=None):
     for run_day, out_str, inc_str, fare in observations:
         out, inc = date.fromisoformat(out_str), date.fromisoformat(inc_str)
         sat = weekend_of(out)
-        if sat not in result or not out <= sat < inc:
+        # Joined stays spanning two weekends are priced separately; never
+        # let their unusually cheap one-way basket lower a weekly budget.
+        if (sat not in result or
+                out not in outbound_dates_for_weekend(sat) or
+                inc not in inbound_dates_for_weekend(sat)):
             continue
         item = result[sat]
         if item['checked_at'] is None:
