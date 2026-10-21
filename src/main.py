@@ -26,7 +26,7 @@ def main() -> None:
 
     print("[INFO] Planning rolling 300-day fare monitoring...")
     baseline_pairs, visible_saturdays, daily_saturdays, sampled_saturdays = monitoring_plan(
-        run_date, planning_start,
+        run_date, planning_start, family_plan=family_plan,
     )
     # Long stays over adjacent weekends reuse only the departure/return dates
     # already selected today; no extra distant dates are queried off schedule.
