@@ -142,9 +142,11 @@ def annual_tt_outlook(plan, year=2027):
     remaining = max(0, len(active) - vacation_unallocated)
     every_min, every_max = assumptions['visiting_every_weeks']
     # Ranges are sensitivity bounds, not selected or confirmed Saturdays.
-    min_visits = remaining // every_max
-    max_visits = (remaining + every_min - 1) // every_min
-    min_other, max_other = assumptions['additional_skips_range']
+    min_visits = remaining // every_max if assumptions_present else 0
+    max_visits = ((remaining + every_min - 1) // every_min
+                  if assumptions_present else 0)
+    min_other, max_other = (assumptions['additional_skips_range']
+                            if assumptions_present else (0, 0))
     # Optimistic low TT assumes excluded weekends coincide with working
     # Fridays. Conservative high TT allows all already-free Fridays to be
     # included among the anticipated no-flight weekends.
