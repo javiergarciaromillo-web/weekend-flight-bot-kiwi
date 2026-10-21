@@ -1,5 +1,16 @@
 {
   "required_from": "2027-02-01",
   "required_until": null,
-  "weekends": {}
+  "weekends": {},
+  "forecast_assumptions": {
+    "vacation_weeks": 6,
+    "visiting_every_weeks": [
+      4,
+      6
+    ],
+    "additional_skips_range": [
+      0,
+      2
+    ]
+  }
 }
