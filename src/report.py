@@ -204,12 +204,21 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                   '<th style="padding:10px">Vuelos · precio por trayecto</th>'
                   '<th style="padding:10px;text-align:right">Total</th></tr>')
         month = None
+        last_weekend = None
         for t in items:
-            current = (t['outbound'].year, t['outbound'].month)
+            saturday = weekend_of(t['outbound'])
+            current = (saturday.year, saturday.month)
             if current != month:
-                result += (f'<tr><td colspan="3" style="padding:12px 10px 6px;color:#475569;'
+                result += (f'<tr><td colspan="3" style="background:#eef2f6;padding:13px 10px;'
+                           f'border-top:3px solid #94a3b8;border-bottom:2px solid #cbd5e1;'
                            f'font-weight:bold">{MONTHS[current[1]-1].upper()} {current[0]}</td></tr>')
                 month = current
+                last_weekend = None
+            if last_weekend != saturday:
+                result += (f'<tr><td colspan="3" style="padding:8px 10px;background:#f8fafc;'
+                           f'border-bottom:1px solid #cbd5e1;font-weight:bold">'
+                           f'Fin de semana {saturday.day:02d}/{saturday.month:02d}/{saturday.year}</td></tr>')
+                last_weekend = saturday
             nights = (t['inbound']-t['outbound']).days
             tt_dates, tt_notes = trip_work_dates(t)
             holidays = holiday_dates(t['outbound'], t['inbound'])
