@@ -1,7 +1,9 @@
 {
   "required_from": "2027-02-01",
   "required_until": null,
-  "weekends": {},
+  "weekends": {
+    "2027-12-25": "holiday_break"
+  },
   "forecast_assumptions": {
     "vacation_weeks": 6,
     "visiting_every_weeks": [
