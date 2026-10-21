@@ -115,7 +115,7 @@ def _monthly_budget(tracking, coverage, family_plan=None):
         if ((plan.get('required_from') and key < plan['required_from'])
                 or (plan.get('required_until') and key > plan['required_until'])):
             continue
-        if plan.get('weekends', {}).get(key) in ('booked', 'covered', 'skipped'):
+        if plan.get('weekends', {}).get(key) in ('booked', 'covered', 'skipped', 'vacation', 'visiting_nl', 'holiday_break'):
             continue
         bucket = monthly.setdefault((saturday.year, saturday.month),
                                     {'subtotal': 0, 'priced': 0, 'total': 0})
@@ -249,7 +249,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                     f"{year}: {a['remote']} TT / {a['leave']} vac."
                     for year, a in allocation.items())
             decision = decisions.get((t['outbound'], t['inbound']))
-            if any(w['state'] in ('booked', 'covered', 'skipped', 'outside') and t['outbound'] <= w['weekend'] < t['inbound'] for w in coverage):
+            if any(w['state'] in ('booked', 'covered', 'skipped', 'vacation', 'visiting_nl', 'holiday_break', 'outside') and t['outbound'] <= w['weekend'] < t['inbound'] for w in coverage):
                 decision = None
             if decision:
                 meta += (f'<br><b>{escape(decision["action"])}</b>'
