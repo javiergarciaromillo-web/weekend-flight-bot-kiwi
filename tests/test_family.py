@@ -24,10 +24,10 @@ class FamilyTests(unittest.TestCase):
         coverage = build_coverage(self.trips, {})
         self.assertEqual(len(coverage), 2)
         html = render_coverage(coverage, [])
-        self.assertIn('2026-11-14', html)
+        self.assertIn('sáb. 14/11', html)
         self.assertIn('Sin precio completo', html)
         self.assertIn('Reserva sin verificar', html)
-        self.assertIn('1/2 fines de semana', html)
+        self.assertIn('Opción más barata: 200 €', html)
         self.assertEqual(join_opportunities(coverage, self.trips), [])
 
     def test_join_saves_two_legs_and_counts_extra_workdays(self):
@@ -38,9 +38,9 @@ class FamilyTests(unittest.TestCase):
         self.assertEqual(joins[0]['extra_workdays'], 4)
         self.assertFalse(joins[0]['allocation'][2026]['verified'])
         html = render_coverage(coverage, joins)
-        self.assertIn('500 € para 2/2', html)
-        self.assertIn('evitando dos trayectos', html)
-        self.assertIn('no sumar sus ahorros', html)
+        self.assertIn('dos viajes 2 días → estancia unida 6 días', html)
+        self.assertIn('evitas dos trayectos', html)
+        self.assertIn('no sumes ahorros', html)
 
     def test_booked_skipped_and_covered_do_not_generate_buy_or_join(self):
         for state in ('booked', 'skipped', 'covered'):
@@ -50,14 +50,14 @@ class FamilyTests(unittest.TestCase):
                 self.assertEqual(join_opportunities(coverage, self.trips), [])
                 html = render_coverage(coverage, [])
                 self.assertIn('Sin recomendación de nueva compra', html)
-                self.assertIn('300 € para 1/1', html)
+                self.assertIn('Opción más barata: 300 €', html)
                 self.assertNotIn('Inicio de la rutina familiar pendiente', html)
 
     def test_outside_family_period_is_not_required(self):
         coverage = build_coverage(self.trips, {}, {'required_from':'2026-11-10'})
         self.assertEqual(coverage[0]['state'], 'outside')
         self.assertEqual(join_opportunities(coverage, self.trips), [])
-        self.assertNotIn('2026-11-07', render_coverage(coverage, []))
+        self.assertNotIn('Fin de semana sáb. 07/11', render_coverage(coverage, []))
 
     def test_joins_reuse_dates_and_only_adjacent_weekends(self):
         pairs = generate_weekend_pairs(date(2026, 11, 2), weeks=3)
@@ -78,9 +78,9 @@ class FamilyTests(unittest.TestCase):
         trips = [trip(date(2026,10,29),date(2026,11,1),350),
                  trip(date(2026,11,5),date(2026,11,8),100)]
         html = render_coverage(build_coverage(trips, {}), [])
-        self.assertIn('2026-10: 350 €', html)
-        self.assertIn('2026-11: 100 €', html)
-        self.assertLess(html.index('2026-10-31'), html.index('2026-11-07'))
+        self.assertIn('Opción más barata: 350 €', html)
+        self.assertIn('Opción más barata: 100 €', html)
+        self.assertLess(html.index('OCTUBRE 2026'), html.index('NOVIEMBRE 2026'))
 
 
 class FamilyStartTests(unittest.TestCase):
