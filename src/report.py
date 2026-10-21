@@ -313,8 +313,9 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                  f'<b>{len(failed)} consultas pendientes de verificar: cobertura parcial.</b> '
                  'Los precios completos pueden existir por otro aeropuerto; no garantizan la opción más barata.</p>')
 
-    bridges = [t for t in trips if holiday_dates(t['outbound'], t['inbound'])]
-    ordinary = [t for t in trips if (t['inbound']-t['outbound']).days <= 4 and not holiday_dates(t['outbound'], t['inbound'])]
+    detailed = [t for t in trips if (not daily_saturdays or weekend_of(t['outbound']) in set(daily_saturdays)) and (t['inbound']-t['outbound']).days <= 8]
+    bridges = [t for t in detailed if holiday_dates(t['outbound'], t['inbound'])]
+    ordinary = [t for t in detailed if (t['inbound']-t['outbound']).days <= 4 and not holiday_dates(t['outbound'], t['inbound'])]
     if ordinary:
         html += '<h2 style="font-size:18px;margin-top:24px">Opciones para cubrir tus fines de semana</h2>' + table(ordinary)
     if bridges:
