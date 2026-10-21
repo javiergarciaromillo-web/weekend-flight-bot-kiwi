@@ -70,35 +70,36 @@ def _leg(rows, diagnostics, leg_date, outbound):
 
 
 def _horizon_radar(tracking, daily_saturdays=()):
-    """Historical long-range observations; never imply a stale quote is live."""
+    """Show dated long-range quotes, grouping months and individual weekends."""
     daily = set(daily_saturdays)
     future = [t for t in tracking if t['weekend'] not in daily]
     if not future:
         return ''
-    html = ('<h2 style="font-size:18px">Radar de precios a largo plazo</h2>'
-            '<p>Seguimiento hasta unos 10 meses. Fechas lejanas: comprobación '
-            'periódica, no diaria. Cada precio indica cuándo se observó; '
-            'no equivale a una tarifa disponible hoy.</p>')
+    html = ('<h2 style="font-size:18px;margin-top:26px">Radar de precios a largo plazo</h2>'
+            '<p>Seguimiento de 300 días. Las fechas lejanas se consultan 2–3 veces'
+            ' por semana: los precios anteriores no garantizan disponibilidad actual.</p>')
     current_month = None
     for item in future:
         saturday = item['weekend']
-        month = saturday.strftime('%Y-%m')
+        month = (saturday.year, saturday.month)
         if month != current_month:
-            html += f'<h3 style="font-size:14px;margin:14px 0 4px">{month}</h3>'
+            html += (f'<h3 style="font-size:15px;border-bottom:2px solid #94a3b8;'
+                     f'margin:20px 0 8px;padding:8px 0 6px">{MONTHS[month[1]-1].upper()} {month[0]}</h3>')
             current_month = month
-        date_label = saturday.strftime('%d/%m')
+        date_label = f'{WEEKDAYS[saturday.weekday()]} {saturday.day:02d}/{saturday.month:02d}'
         if not item['checked_at']:
-            status = 'Primera comprobación pendiente'
+            status = 'Todavía sin consultar; primera muestra pendiente en el calendario escalonado'
         elif item['best_price'] is None:
             status = f'Sin precio completo verificado (consulta {escape(str(item["checked_at"]))})'
         else:
-            status = (f'{_price(item["best_price"])}'
+            status = (f'<b>{_price(item["best_price"])}</b>'
                       f' · visto el {escape(str(item["checked_at"]))}'
-                      f' · {escape(str(item["outbound"]))} → {escape(str(item["inbound"]))}')
-        html += (f'<p style="margin:4px 0;font-size:12px">'
-                 f'<b>Finde {date_label}:</b> {status}</p>')
+                      f'<br><span style="color:#64748b">{escape(str(item["outbound"]))}'
+                      f' → {escape(str(item["inbound"]))}</span>')
+        html += (f'<div style="border:1px solid #e2e8f0; border-left:3px solid #cbd5e1;'
+                 f'margin:6px 0;padding:9px 11px;font-size:12px">'
+                 f'<b>Fin de semana {date_label}</b><br>{status}</div>')
     return html
-
 
 def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=None,
                       family_plan=None, horizon_tracking=None, daily_saturdays=()):
