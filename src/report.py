@@ -178,19 +178,23 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
 
     def flight_line(row):
         url = escape(row.get('source_url') or '#', quote=True)
-        return (f"{escape(row['origin'])}→{escape(row['destination'])} "
-                f"{_time(row.get('outbound_departure'))}–{_time(row.get('outbound_arrival'))} "
-                f'<span style="color:#64748b">{escape(row.get("airline") or "—")}</span> '
-                f'<a href="{url}" style="color:#2563eb">{_price(row.get("price"))}</a>')
+        return (f"<b>{escape(row['origin'])}→{escape(row['destination'])}</b> · "
+                f"{escape(row.get('airline') or '—')} · "
+                f"{_time(row.get('outbound_departure'))}–{_time(row.get('outbound_arrival'))} · "
+                f'<a href="{url}" style="color:#2563eb"><b>{_price(row.get("price"))}</b></a>')
 
     def leg_lines(trip, outbound):
         choices = sorted(trip['out' if outbound else 'inc'], key=lambda r: r['price'])[:2]
         if not choices:
             return _leg([], diagnostics, trip['outbound' if outbound else 'inbound'], outbound)
-        # Keep the alternative, with less emphasis than the cheapest leg.
-        return flight_line(choices[0]) + (
-            '<br><span style="color:#64748b;font-size:11px">Alternativa: '
-            + flight_line(choices[1]) + '</span>' if len(choices) > 1 else '')
+        label = compact_date(trip['outbound' if outbound else 'inbound'])
+        text = (f'<div style="font-size:11px;font-weight:bold;color:#475569;'
+                f'padding:5px 0 2px">{"IDA" if outbound else "VUELTA"} · {label}</div>'
+                f'<div style="font-size:12px;padding:2px 0">{flight_line(choices[0])}</div>')
+        if len(choices) > 1:
+            text += (f'<div style="font-size:11px;color:#64748b;padding:2px 0 5px">'
+                     f'↳ Opción 2: {flight_line(choices[1])}</div>')
+        return text
 
     def table(items):
         result = ('<table role="table" width="100%" cellpadding="0" cellspacing="0" '
@@ -207,9 +211,14 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                            f'font-weight:bold">{MONTHS[current[1]-1].upper()} {current[0]}</td></tr>')
                 month = current
             nights = (t['inbound']-t['outbound']).days
-            affected = workdays_affected(t['outbound'], t['inbound'])
+            tt_dates, tt_notes = trip_work_dates(t)
             holidays = holiday_dates(t['outbound'], t['inbound'])
-            meta = f'{nights} noches · {affected} laborables'
+            meta = f'{nights} noches · {len(tt_dates)} días TT/permiso estimados'
+            if tt_dates:
+                meta += '<br>TT/permiso: ' + ', '.join(
+                    f'{WEEKDAYS[d.weekday()]} {d.day}/{d.month}' for d in tt_dates)
+            if tt_notes and any('Salida antes' in note for note in tt_notes):
+                meta += '<br>Viernes temprano: TT o permiso parcial'
             if holidays:
                 meta += f'<br><span style="color:#9a6700">{len(holidays)} festivos NCIA</span>'
             if t['out'] and t['inc']:
@@ -217,7 +226,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                 inc = min(t['inc'], key=lambda r: r['price'])
                 if out['origin'] != inc['destination']:
                     meta += '<br><span style="color:#9a6700">Aeropuertos distintos</span>'
-            allocation = estimate_allocation(t['outbound'], t['inbound'])
+            allocation = estimate_allocation(t['outbound'], t['inbound'], workdates=tt_dates)
             if allocation:
                 meta += '<br>' + '; '.join(
                     f"{year}: {a['remote']} TT / {a['leave']} vac."
@@ -246,8 +255,9 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                 + (f' {t["inbound"].year}' if t['inbound'].year != t['outbound'].year else '')
                 + '</b><br>'
                 f'<span style="font-size:11px;color:#64748b">{meta}</span></td>'
-                f'<td class="trip-flights" style="padding:10px"><b>Ida</b> · {leg_lines(t, True)}<br>'
-                f'<b>Vuelta</b> · {leg_lines(t, False)}</td>'
+                f'<td class="trip-flights" style="padding:10px">{leg_lines(t, True)}'
+                f'<div style="border-top:1px dashed #cbd5e1;margin-top:4px">'
+                f'{leg_lines(t, False)}</div></td>'
                 f'<td class="trip-total" style="padding:10px;text-align:right;white-space:nowrap"><b>{total}</b></td></tr>')
         return result + '</table>'
 
