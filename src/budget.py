@@ -5,6 +5,7 @@ separate trips must not be added when their dates overlap.
 """
 from datetime import date, datetime, timedelta
 from src.holidays import is_free_day
+from src.travel_plan import NO_TRAVEL_STATES, forecast_config, confirmed_no_flight
 
 REMOTE_WORK_DAYS = 46
 MAX_CONSECUTIVE_REMOTE_DAYS = 5
@@ -104,12 +105,12 @@ def assess_remote_plan(dates):
 
 
 def annual_tt_outlook(plan, year=2027):
-    """Rough yearly baseline: one Friday working remotely for each family weekend.
+    """Conservative illustrative TT range, accounting for undated absence plans.
 
-    Excludes explicitly skipped weekends and NCIA-holiday Fridays. It is NOT a
-    booking record, approved TT schedule, or proof of enough remaining days.
+    Weeks with dated no-flight states are truly excluded. Six vacation weeks
+    and visits every four to six weeks are forecasts ONLY and never suppress
+    actual fare searches without confirmed Saturday dates.
     """
-    from datetime import date
     if not plan or not plan.get('required_from'):
         return None
     start = max(date.fromisoformat(plan['required_from']), date(year, 1, 1))
@@ -118,19 +119,66 @@ def annual_tt_outlook(plan, year=2027):
               date(year, 12, 31))
     if start > end:
         return None
-    saturday = start + timedelta(days=(5-start.weekday()) % 7)
-    weekends = 0
-    baseline = 0
-    while saturday <= end:
-        if plan.get('weekends', {}).get(str(saturday)) != 'skipped':
-            weekends += 1
-            friday = saturday - timedelta(days=1)
-            baseline += int(not is_free_day(friday))
-        saturday += timedelta(days=7)
-    return dict(year=year, weekends=weekends, baseline_tt=baseline,
-                cap=REMOTE_WORK_DAYS, margin=REMOTE_WORK_DAYS-baseline,
-                verified_remaining=False)
+    first = start + timedelta(days=(5 - start.weekday()) % 7)
+    all_saturdays = []
+    current = first
+    while current <= end:
+        all_saturdays.append(current)
+        current += timedelta(days=7)
+    active = [sat for sat in all_saturdays if not confirmed_no_flight(plan, sat)]
+    explicit = {str(sat): plan.get('weekends', {}).get(str(sat))
+                for sat in all_saturdays
+                if confirmed_no_flight(plan, sat)}
+    confirmed_vacation = sum(status == 'vacation' for status in explicit.values())
+    full_friday_baseline = sum(not is_free_day(sat - timedelta(days=1)) for sat in active)
+    # Already-free Fridays are part of the base and must not be deducted a
+    # second time as if they consumed one TT.
+    free_fridays = len(active) - full_friday_baseline
 
+    assumptions_present = bool(plan.get('forecast_assumptions'))
+    assumptions = forecast_config(plan)
+    vacation_unallocated = min(
+        len(active), max(0, assumptions['vacation_weeks'] - confirmed_vacation))
+    remaining = max(0, len(active) - vacation_unallocated)
+    every_min, every_max = assumptions['visiting_every_weeks']
+    # Ranges are sensitivity bounds, not selected or confirmed Saturdays.
+    min_visits = remaining // every_max
+    max_visits = (remaining + every_min - 1) // every_min
+    min_other, max_other = assumptions['additional_skips_range']
+    # Optimistic low TT assumes excluded weekends coincide with working
+    # Fridays. Conservative high TT allows all already-free Fridays to be
+    # included among the anticipated no-flight weekends.
+    excluded_min = vacation_unallocated + min_visits + min_other
+    excluded_max = vacation_unallocated + max_visits + max_other
+    scenario_max = max(0, full_friday_baseline
+                       - max(0, excluded_min - free_fridays))
+    scenario_min = max(0, full_friday_baseline
+                       - min(full_friday_baseline, excluded_max))
+    return {
+        'year': year,
+        'calendar_weekends': len(all_saturdays),
+        'weekends': len(active),
+        'confirmed_no_flight_weekends': len(explicit),
+        'confirmed_no_flight_by_reason': {
+            reason: sum(value == reason for value in explicit.values())
+            for reason in sorted(NO_TRAVEL_STATES)
+        },
+        'all_weekend_baseline_tt': full_friday_baseline,
+        # Downstream alternative checks intentionally take the higher
+        # plausible consumption when undated forecasts are present.
+        'baseline_tt': scenario_max,
+        'scenario_min_tt': scenario_min,
+        'scenario_max_tt': scenario_max,
+        'forecast_used': assumptions_present,
+        'assumed_vacation_weeks': vacation_unallocated,
+        'assumed_partner_visits_min': min_visits,
+        'assumed_partner_visits_max': max_visits,
+        'assumed_other_skips_min': min_other,
+        'assumed_other_skips_max': max_other,
+        'cap': REMOTE_WORK_DAYS,
+        'margin': REMOTE_WORK_DAYS - scenario_max,
+        'verified_remaining': False,
+    }
 
 def projected_annual_tt(workdates, saturdays, outlook):
     """Sensitivity test for alternatives against the 1-Friday-TT annual baseline.
