@@ -45,6 +45,18 @@ class RealisticFamilyPlanTests(unittest.TestCase):
         self.assertIn(date(2027, 2, 6), daily)
         self.assertIn((date(2027, 2, 4), date(2027, 2, 7)), pairs)
 
+    def test_unknown_week_is_not_treated_as_purchase_commitment(self):
+        from src.family import build_coverage, render_coverage
+        plan = load_plan()
+        one = dict(outbound=date(2027, 2, 4),
+                   inbound=date(2027, 2, 7), total=130)
+        coverage = build_coverage([one], {}, plan)
+        html = render_coverage(coverage, [], annual_outlook=annual_tt_outlook(plan))
+        self.assertIn('27–34 TT', html)
+        self.assertIn('Viaje todavía por confirmar', html)
+        self.assertIn('una visita de Raquel', html)
+        self.assertIn('46 días', html)
+
     def test_dated_partner_visit_suppresses_only_its_own_weekend(self):
         plan = load_plan()
         plan['weekends'] = dict(plan['weekends'], **{'2027-02-06': 'visiting_nl'})
