@@ -6,7 +6,9 @@ from html import escape
 from src.family import build_coverage, join_opportunities, render_coverage, weekend_of
 from src.store import get_weekend_history, get_latest_learning_opportunities
 from src.holidays import holiday_dates, workdays_affected
-from src.budget import REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, estimate_allocation, trip_work_dates
+from src.budget import (REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, MAX_CONSECUTIVE_REMOTE_DAYS,
+                        estimate_allocation, trip_work_dates, assess_remote_plan,
+                        annual_tt_outlook)
 from src.planner import allowed_pair, FILTER_HISTORY_START
 
 
@@ -221,6 +223,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                 last_weekend = saturday
             nights = (t['inbound']-t['outbound']).days
             tt_dates, tt_notes = trip_work_dates(t)
+            tt_assessment = assess_remote_plan(tt_dates)
             holidays = holiday_dates(t['outbound'], t['inbound'])
             meta = f'{nights} noches · {len(tt_dates)} días TT/permiso estimados'
             if tt_dates:
@@ -228,6 +231,11 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                     f'{WEEKDAYS[d.weekday()]} {d.day}/{d.month}' for d in tt_dates)
             if tt_notes and any('Salida antes' in note for note in tt_notes):
                 meta += '<br>Viernes temprano: TT o permiso parcial'
+            meta += (f'<br>Racha TT: {tt_assessment["longest_consecutive_tt"]}/'
+                     f'{MAX_CONSECUTIVE_REMOTE_DAYS} · cupo anual {REMOTE_WORK_DAYS}')
+            if tt_assessment['requires_special_authorisation']:
+                meta += ('<br><span style="color:#9a3412"><b>AUTORIZACIÓN ESPECIAL '
+                         'necesaria si todos estos días son TT</b></span>')
             if holidays:
                 meta += f'<br><span style="color:#9a6700">{len(holidays)} festivos NCIA</span>'
             if t['out'] and t['inc']:
@@ -291,7 +299,8 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
     if daily_saturdays:
         daily = set(daily_saturdays)
         coverage = [week for week in coverage if week['weekend'] in daily]
-    html += render_coverage(coverage, join_opportunities(coverage, trips))
+    html += render_coverage(coverage, join_opportunities(coverage, trips),
+                            annual_outlook=annual_tt_outlook(family_plan))
     if horizon_tracking:
         html += _horizon_radar(horizon_tracking, daily_saturdays)
     if decisions:
