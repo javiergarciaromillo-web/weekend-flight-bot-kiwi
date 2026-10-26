@@ -5,11 +5,12 @@ from html import escape
 
 from src.family import build_coverage, join_opportunities, render_coverage, weekend_of
 from src.store import get_weekend_history, get_latest_learning_opportunities
-from src.holidays import holiday_dates, workdays_affected
+from src.holidays import holiday_dates, workdays_affected, HOLIDAYS
 from src.budget import (REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, MAX_CONSECUTIVE_REMOTE_DAYS,
                         estimate_allocation, trip_work_dates, assess_remote_plan,
                         annual_tt_outlook)
 from src.planner import allowed_pair, FILTER_HISTORY_START
+from src.priority_digest import render_priority_digest
 
 
 WEEKDAYS = ['lun.', 'mar.', 'mié.', 'jue.', 'vie.', 'sáb.', 'dom.']
@@ -300,9 +301,11 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
         daily = set(daily_saturdays)
         coverage = [week for week in coverage if week['weekend'] in daily]
     annual_outlook = annual_tt_outlook(family_plan)
+    html += render_priority_digest(run_date, coverage, trips, decisions,
+                                   tracking=horizon_tracking, family_plan=family_plan)
     html += render_coverage(coverage,
                             join_opportunities(coverage, trips, annual_outlook),
-                            annual_outlook=annual_outlook)
+                            annual_outlook=annual_outlook, compact=True)
     if horizon_tracking:
         html += _horizon_radar(horizon_tracking, daily_saturdays)
     if decisions:
@@ -314,11 +317,6 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
                  'Tarifas sin coste de traslados ni equipaje adicional.</p>')
     if not complete:
         html += '<p>Sin combinaciones completas verificadas.</p>'
-    drops = sorted([t for t in complete if t['delta'] is not None and t['delta'] <= -20], key=lambda t: t['delta'])
-    if drops:
-        html += '<p style="color:#15803d"><b>Bajadas de al menos 20 €:</b> ' + '; '.join(
-            f'{compact_date(t["outbound"])} → {compact_date(t["inbound"])}: {t["delta"]:+.0f} €'
-            for t in drops[:3]) + '</p>'
     if failed:
         html += (f'<p style="padding:10px;background:#fff7ed;color:#9a3412">'
                  f'<b>{len(failed)} consultas pendientes de verificar: cobertura parcial.</b> '
@@ -327,7 +325,8 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
     detailed = [t for t in trips if (not daily_saturdays or weekend_of(t['outbound']) in set(daily_saturdays)) and (t['inbound']-t['outbound']).days <= 8]
     bridges = [t for t in detailed if holiday_dates(t['outbound'], t['inbound'])]
     ordinary = [t for t in detailed if (t['inbound']-t['outbound']).days <= 4 and not holiday_dates(t['outbound'], t['inbound'])]
-    if ordinary:
+    # The weekly cards already show the ordinary choices; do not repeat them.
+    if ordinary and not coverage:
         html += '<h2 style="font-size:18px;margin-top:24px">Opciones para cubrir tus fines de semana</h2>' + table(ordinary)
     if bridges:
         ranked = sorted([t for t in bridges if t['total'] is not None], key=lambda t: (
@@ -338,7 +337,11 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
             html += (f'<p><b>Destacada por aprovechar días libres:</b> '
                      f'{date_range(t)}, {(t["inbound"]-t["outbound"]).days} noches, '
                      f'{workdays_affected(t["outbound"], t["inbound"])} laborables, {_price(t["total"])}.</p>')
-        html += table(bridges)
+        # Detailed holiday windows remain available without overwhelming the email.
+        html += table(sorted(bridges, key=lambda t: (
+            workdays_affected(t['outbound'], t['inbound']),
+            -(t['inbound']-t['outbound']).days, t['total'] is None,
+            t['total'] if t['total'] is not None else 1e9))[:10])
 
     available_opportunities = [o for o in get_latest_learning_opportunities(limit=100)
                                if o['run_date'] == str(run_date)
@@ -416,6 +419,9 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
              'Los repartos por viaje son alternativas, no consumen saldo. '
              'El saldo disponible de 2026 no está verificado. '
              'Laborables: desde el día siguiente a la ida hasta la vuelta, inclusive; se supone trabajo antes de la ida.<br>')
+    official_2027 = sorted(d for d in HOLIDAYS if d.year == 2027)
+    html += ('<b>Calendario NCIA 2027 configurado (' + str(len(official_2027)) + ' días):</b> '
+             + '; '.join(_fmt_day(d) for d in official_2027) + '.<br>')
     if used_holidays:
-        html += '<b>Festivos NCIA utilizados:</b> ' + '; '.join(_fmt_day(d) for d in used_holidays) + '.<br>'
+        html += '<b>Festivos presentes en las estancias analizadas:</b> ' + '; '.join(_fmt_day(d) for d in used_holidays) + '.<br>'
     return html + '</div></div></body></html>'
