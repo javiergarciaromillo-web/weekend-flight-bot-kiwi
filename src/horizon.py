@@ -7,7 +7,8 @@ Never present unqueried weeks as live fare checks.
 from datetime import date, timedelta
 
 from src.family import weekend_of
-from src.holidays import generate_holiday_pairs
+from src.holidays import generate_holiday_pairs, HOLIDAYS
+from src.priority_digest import holiday_weekend
 from src.planner import generate_weekend_pairs
 from src.travel_plan import confirmed_no_flight
 
@@ -23,6 +24,8 @@ def monitoring_plan(run_date: date, planning_start: date, family_plan=None):
     First eight family weekends remain daily even when the family start is
     several months away. Beyond that, <=8 weeks are daily, 9-20 weeks get
     three samples per week, and more distant weeks get two samples per week.
+    NCIA holiday weekends get three samples weekly even when distant, and
+    daily samples inside 110 days.
     Holiday long stays and adjacent-weekend joins are considered only for
     weekends sampled on this run.
     """
@@ -44,12 +47,16 @@ def monitoring_plan(run_date: date, planning_start: date, family_plan=None):
     daily = set(visible[:DAILY_WEEKS])
     due = set()
     today_bucket = run_date.toordinal() % 7
+    priority_holidays = {holiday_weekend(day) for day in HOLIDAYS if day.year == 2027}
     for sat in visible:
         days_ahead = (sat - run_date).days
         if sat in daily or days_ahead <= DAILY_WEEKS * 7:
             daily.add(sat)
             due.add(sat)
-        elif days_ahead <= TWICE_WEEKLY_UNTIL_WEEKS * 7:
+        elif sat in priority_holidays and days_ahead <= 110:
+            # Check NCIA holiday travel daily once the date draws closer.
+            due.add(sat)
+        elif days_ahead <= TWICE_WEEKLY_UNTIL_WEEKS * 7 or sat in priority_holidays:
             phase = (sat.toordinal() // 7) % 7
             if today_bucket in (phase, (phase + 2) % 7, (phase + 4) % 7):
                 due.add(sat)
