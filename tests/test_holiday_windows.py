@@ -66,6 +66,19 @@ class HolidayWindowTests(unittest.TestCase):
             pairs = set(generate_weekend_pairs(date(2027, 4, 26), 1))
             self.assertIn((date(2027, 4, 29), date(2027, 5, 5)), pairs)
 
+    def test_real_tuesday_king_day_extends_april_family_weekend(self):
+        saturday = date(2027, 4, 24)
+        dates = inbound_dates_for_weekend(saturday)
+        self.assertEqual(dates, [date(2027, 4, 25), date(2027, 4, 26),
+                                 date(2027, 4, 27), date(2027, 4, 28)])
+        self.assertTrue(_departure_ok(date(2027, 4, 27), '10:00', 'inbound', '12:00'))
+        self.assertTrue(is_morning_return_workday(date(2027, 4, 28)))
+        self.assertTrue(_departure_ok(date(2027, 4, 28), '06:00', 'inbound', '08:45'))
+        self.assertFalse(_departure_ok(date(2027, 4, 28), '06:00', 'inbound', '09:10'))
+        pairs = set(generate_weekend_pairs(date(2027, 4, 21), 1))
+        self.assertIn((date(2027, 4, 22), date(2027, 4, 27)), pairs)
+        self.assertIn((date(2027, 4, 23), date(2027, 4, 28)), pairs)
+
     def test_recovered_holiday_flight_and_family_coverage_still_visible(self):
         out, inc = date(2027, 3, 26), date(2027, 3, 30)
         legs = [{'destination': 'BCN', 'leg_date': out, 'leg_type': 'outbound',
