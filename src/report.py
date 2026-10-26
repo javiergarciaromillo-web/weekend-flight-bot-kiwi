@@ -319,7 +319,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
         html += '<p>Sin combinaciones completas verificadas.</p>'
     if failed:
         html += (f'<p style="padding:10px;background:#fff7ed;color:#9a3412">'
-                 f'<b>{len(failed)} consultas pendientes de verificar: cobertura parcial.</b> '
+                 f'<b>{len(failed)} consultas pendientes de verificar: cobertura parcial, disponibilidad sin verificar.</b> '
                  'Los precios completos pueden existir por otro aeropuerto; no garantizan la opción más barata.</p>')
 
     detailed = [t for t in trips if (not daily_saturdays or weekend_of(t['outbound']) in set(daily_saturdays)) and (t['inbound']-t['outbound']).days <= 8]
@@ -406,6 +406,8 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
              'Vuelos directos de Vueling y Transavia; KLM también en las opciones habituales vía AMS. '
              'Vigilancia 300 días: primeras 8 semanas familiares y próximas 8 semanas, diaria; '
              'de 9 a 20 semanas, tres veces por semana; fechas más lejanas, dos veces por semana. '
+             'Los fines de semana con festivos NCIA se vigilan diariamente a menos de 110 días, '
+             'y tres veces por semana antes de ese horizonte. '
              'Los precios del radar incluyen fecha y pueden no seguir disponibles.<br>'
              'Viajes habituales jueves/viernes a domingo/lunes, con extensiones por festivos NCIA. '
              'Ida del jueves laborable desde las 17:00; viernes laborable antes de las 08:00 '
