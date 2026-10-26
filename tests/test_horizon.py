@@ -29,7 +29,7 @@ class HorizonTests(unittest.TestCase):
         start = date(2027, 1, 4)  # Monday
         family = date(2027, 2, 1)
         near = date(2027, 2, 6)
-        mid = date(2027, 4, 24)   # >8 and <20 weeks away
+        mid = date(2027, 4, 17)   # Ordinary week >8 and <20 weeks away
         far = date(2027, 8, 7)    # >20 weeks away, inside 300d
         results = []
         for offset in range(7):
