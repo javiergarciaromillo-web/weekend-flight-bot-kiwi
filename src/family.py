@@ -171,7 +171,7 @@ def _tt_details(trip):
     return ('TT/permiso a prever: ' + ', '.join(_day(day) for day in dates), notes)
 
 
-def render_coverage(coverage, joins, annual_outlook=None):
+def render_coverage(coverage, joins, annual_outlook=None, compact=False):
     """Email-friendly weekly cards with dated flights and requested TT dates.
 
     All working-day estimates are conditional: they are NOT approved TT/leave.
@@ -295,7 +295,7 @@ def render_coverage(coverage, joins, annual_outlook=None):
         ordered = sorted(week['choices'],
                          key=lambda t: (t['total'] is None, option_risk(t),
                                         t['total'] or 0, t['outbound'], t['inbound']))
-        for index, choice in enumerate(ordered):
+        for index, choice in enumerate(ordered[:2] if compact else ordered):
             highlighted = index == 0 and choice['total'] is not None
             chosen_tt_dates = trip_work_dates(choice)[0]
             status = assess_remote_plan(chosen_tt_dates)
@@ -325,7 +325,7 @@ def render_coverage(coverage, joins, annual_outlook=None):
                 html += ('<div style="font-size:11px;color:#9a3412;padding-left:8px">'
                          '<b>No prioritaria:</b> más de cinco jornadas TT seguidas; '
                          'solo con autorización especial o reorganizando con vacaciones.</div>')
-            if annual_scenario:
+            if annual_scenario and (not compact or highlighted):
                 note = ' · EXCESO TEÓRICO' if annual_scenario['exceeds_cap'] else ''
                 html += (f'<div style="font-size:11px;color:#475569;padding-left:8px">'
                          f'Proyección 2027 si el resto de fines de semana sigue el '
