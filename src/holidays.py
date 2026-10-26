@@ -47,6 +47,12 @@ def inbound_dates_for_weekend(saturday):
     if monday in HOLIDAYS:
         while is_free_day(last):
             last += timedelta(days=1)
+    elif monday + timedelta(days=1) in HOLIDAYS:
+        # Example: NCIA King's Day Tuesday 27 April 2027. A Monday TT can
+        # extend the family weekend; a Wednesday early return can avoid more TT.
+        last = monday + timedelta(days=2)
+        while is_free_day(last):
+            last += timedelta(days=1)
     return [sunday + timedelta(days=i)
             for i in range((last - sunday).days + 1)]
 
@@ -58,6 +64,8 @@ def is_morning_return_workday(day):
     if day.weekday() == 0:
         return True
     monday = day - timedelta(days=day.weekday())
+    if day.weekday() == 2 and monday + timedelta(days=1) in HOLIDAYS:
+        return True
     return monday in HOLIDAYS and all(
         is_free_day(monday + timedelta(days=i)) for i in range(day.weekday())
     )
