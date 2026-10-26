@@ -275,7 +275,8 @@ def render_coverage(coverage, joins, annual_outlook=None, compact=False):
             else 'Opción más barata')
         html += (f'<div style="margin:2px 0 8px;font-size:13px">'
                  f'<b>{best_label}: {best["total"]:.0f} €</b>'
-                 f' · {_day(best["outbound"])} → {_day(best["inbound"])}</div>')
+                 f' · {_day(best["outbound"])} → {_day(best["inbound"])}'
+                 f' · {(best["inbound"] - best["outbound"]).days} noches</div>')
         if decision:
             html += (f'<div style="font-size:11px;color:#475569;margin-bottom:8px">'
                      f'{escape(decision.get("action", "REVISAR"))}'
