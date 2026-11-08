@@ -80,6 +80,30 @@ class MarketEvidenceTests(unittest.TestCase):
         self.assertEqual(booking_window_evidence(rows, date(2026, 12, 1))['status'],
                          'insufficient')
 
+    def test_mature_booking_horizon_must_match_season_pattern_and_holidays(self):
+        as_of = date(2027, 8, 1)
+        departures = [date(2027, 1, 1) + timedelta(days=7*i)
+                      for i in range(8)]
+        rows = []
+        for departure in departures:
+            rows.extend([
+                quote(departure-timedelta(days=90), departure, 100),
+                quote(departure-timedelta(days=45), departure, 150),
+                quote(departure-timedelta(days=7), departure, 190),
+            ])
+        near_january = booking_window_evidence(
+            rows, as_of, travel_month=1, weekday_pattern=(4,0), holiday=False)
+        self.assertEqual(near_january['status'], 'observational')
+        not_autumn = booking_window_evidence(
+            rows, as_of, travel_month=10, weekday_pattern=(4,0), holiday=False)
+        self.assertEqual(not_autumn['status'], 'insufficient')
+        not_thursday = booking_window_evidence(
+            rows, as_of, travel_month=1, weekday_pattern=(3,0), holiday=False)
+        self.assertEqual(not_thursday['status'], 'insufficient')
+        not_holiday = booking_window_evidence(
+            rows, as_of, travel_month=1, weekday_pattern=(4,0), holiday=True)
+        self.assertEqual(not_holiday['status'], 'insufficient')
+
     def test_market_direction_only_uses_same_trip_pairs(self):
         today = date(2027, 3, 10)
         dates = [date(2027, 5, 7) + timedelta(days=7*i) for i in range(6)]
