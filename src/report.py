@@ -212,13 +212,28 @@ def _market_learning_panel(run_date, coverage, market_history):
                  f'{escape(movement["period"])}). '
                  'Es una tendencia de nuestras tarifas, '
                  'no una atribución al precio del combustible.</p>')
-    evidence = booking_window_evidence(rows, run_date)
+    # Learn booking lead-time only from already-departed, seasonally similar
+    # trips with the SAME weekday pattern. Sparse data should not be pooled
+    # across summer/winter to manufacture a confident booking window.
+    focus = next((w['best'] for w in coverage if w.get('best') and
+                  w['state'] not in ('booked','covered','skipped','vacation',
+                                     'visiting_nl','holiday_break','outside')), None)
+    filter_args = {}
+    if focus:
+        filter_args = dict(
+            travel_month=focus['outbound'].month,
+            weekday_pattern=(focus['outbound'].weekday(), focus['inbound'].weekday()),
+            holiday=bool(holiday_dates(focus['outbound'], focus['inbound'])))
+    evidence = booking_window_evidence(rows, run_date, **filter_args)
     if evidence['status'] == 'insufficient':
         html += (f'<p style="font-size:12px;color:#64748b">'
                  f'<b>Antelación óptima: todavía no calibrada.</b> '
                  f'{evidence["mature_trips"]} viajes finalizados con al menos '
                  f'tres intervalos de reserva observados '
                  f'(mínimo inicial {evidence["minimum_needed"]}). '
+                 'La calibración se hace por temporada y patrón de vuelo, '
+                 'sin mezclar meses o días incompatibles para fabricar '
+                 'una ventana óptima. '
                  'Hasta entonces no es fiable recomendar comprar a '
                  '30, 60, 90 o 180 días basándose en nuestra muestra.</p>')
     else:
