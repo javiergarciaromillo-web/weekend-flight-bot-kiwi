@@ -296,13 +296,15 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
             f'{len(complete)}/{len(trips)} viajes con precio completo</p>'
             '')
     coverage = build_coverage(trips, decisions, family_plan)
-    # The first block is actionable daily coverage; remote checks belong in the radar.
+    # Purchase alerts must include ALL sampled weeks (including the 300-day
+    # cohort), rather than only the first eight daily-surveillance weekends.
+    html += render_priority_digest(run_date, coverage, trips, decisions,
+                                   tracking=horizon_tracking, family_plan=family_plan)
+    # Only the detailed flight cards are limited to close daily coverage.
     if daily_saturdays:
         daily = set(daily_saturdays)
         coverage = [week for week in coverage if week['weekend'] in daily]
     annual_outlook = annual_tt_outlook(family_plan)
-    html += render_priority_digest(run_date, coverage, trips, decisions,
-                                   tracking=horizon_tracking, family_plan=family_plan)
     html += render_coverage(coverage,
                             join_opportunities(coverage, trips, annual_outlook),
                             annual_outlook=annual_outlook, compact=True)
