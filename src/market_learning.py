@@ -109,7 +109,8 @@ def comparable_price(outbound, inbound, price, holiday, records, as_of):
     return None
 
 
-def booking_window_evidence(records, as_of, min_weekends=MIN_MATURE_WEEKENDS):
+def booking_window_evidence(records, as_of, min_weekends=MIN_MATURE_WEEKENDS,
+                            travel_month=None, weekday_pattern=None, holiday=None):
     """Learn only from *already departed* trips with 3+ observed lead bins.
 
     Paired comparisons prevent apparent optima caused by different target
@@ -120,6 +121,17 @@ def booking_window_evidence(records, as_of, min_weekends=MIN_MATURE_WEEKENDS):
     routes = defaultdict(lambda: defaultdict(list))
     for item in _valid_records(records, as_of):
         if item['out'] >= as_of:
+            continue
+        # A booking window can differ across winter/summer, weekday patterns
+        # and NCIA holiday trips. Never pool them silently if the caller has
+        # requested a specific context, even when this means 'insufficient'.
+        if travel_month is not None and _month_gap(
+                item['out'].month, travel_month) > 1:
+            continue
+        if weekday_pattern is not None and (
+                item['out'].weekday(), item['back'].weekday()) != tuple(weekday_pattern):
+            continue
+        if holiday is not None and item['holiday'] != bool(holiday):
             continue
         key = (item['out'], item['back'])
         routes[key][item['bucket']].append(item['price'])
