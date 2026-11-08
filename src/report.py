@@ -11,6 +11,7 @@ from src.budget import (REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, MAX_CONSECUTIVE_REM
                         annual_tt_outlook)
 from src.planner import allowed_pair, FILTER_HISTORY_START
 from src.priority_digest import render_priority_digest
+from src.market_learning import comparable_price, booking_window_evidence, market_movement
 
 
 WEEKDAYS = ['lun.', 'mar.', 'mié.', 'jue.', 'vie.', 'sáb.', 'dom.']
@@ -147,8 +148,102 @@ def _monthly_budget(tracking, coverage, family_plan=None):
     return html
 
 
+
+def _market_learning_panel(run_date, coverage, market_history):
+    """Show price context separately from provisional BUY policy.
+
+    Samples are independent travel weekends, *not* number of daily queries.
+    Never infer an optimal horizon from future or unfinished journeys.
+    """
+    rows = market_history or []
+    html = ('<section style="margin:16px 0;padding:12px;'
+            'border:1px solid #dbe2ea;border-radius:7px">'
+            '<h2 style="font-size:17px;margin:0 0 6px">'
+            'Aprendizaje: precio razonable y antelación</h2>')
+    comparisons = []
+    total_weeks = 0
+    for week in coverage:
+        if week['state'] in ('booked', 'covered', 'skipped', 'vacation', 'visiting_nl',
+                             'holiday_break', 'outside'):
+            continue
+        item = week.get('best')
+        if not item or item.get('total') is None:
+            continue
+        total_weeks += 1
+        context = comparable_price(item['outbound'], item['inbound'],
+                                   item['total'], bool(holiday_dates(
+                                       item['outbound'], item['inbound'])),
+                                   rows, run_date)
+        if context:
+            comparisons.append((week, item, context))
+    html += (f'<p style="font-size:12px;margin:5px 0">Precios comparados '
+             f'con <b>otros fines de semana independientes</b>, del mismo '
+             f'patrón de ida y vuelta, festivos similares y antelación '
+             f'de reserva comparable. {len(comparisons)}/{total_weeks} '
+             'fines de semana tienen muestra suficiente.</p>')
+    sorted_choices = sorted(comparisons, key=lambda t: (
+        not t[2]['favourable'], t[2]['vs_reference_pct'],
+        -t[2]['independent_weekends']))
+    for week, item, context in sorted_choices[:3]:
+        label = ('PRECIO COMPETITIVO EN LA MUESTRA'
+                 if context['favourable'] else 'REFERENCIA DE MERCADO')
+        html += (f'<div style="border-top:1px solid #e2e8f0;'
+                 f'padding:7px 0;font-size:12px">'
+                 f'<b>{label} · fin de semana '
+                 f'{WEEKDAYS[week["weekend"].weekday()]} '
+                 f'{week["weekend"].day:02d}/{week["weekend"].month:02d}</b>'
+                 f'<br>{_fmt_day(item["outbound"])} → {_fmt_day(item["inbound"])}'
+                 f' · <b>{_price(item["total"])}</b>'
+                 f'<br>Mediana comparable {_price(context["reference"])} · '
+                 f'{context["vs_reference_pct"]:+.1f} % · '
+                 f'{context["independent_weekends"]} semanas independientes '
+                 f'({escape(context["context"])}).'
+                 '</div>')
+    if not comparisons:
+        html += ('<p style="font-size:12px;color:#64748b">'
+                 'Aún no hay suficientes fechas independientes '
+                 'con el mismo patrón y antelación. '
+                 'Seguimos acumulando precios, sin inventar un precio justo.</p>')
+    movement = market_movement(rows, run_date)
+    if movement:
+        html += (f'<p style="font-size:12px">Movimiento conjunto observado '
+                 f'para los mismos viajes: <b>{movement["median_change_pct"]:+.1f} %</b> '
+                 f'({movement["weekends"]} semanas comparables; '
+                 f'{escape(movement["period"])}). '
+                 'Es una tendencia de nuestras tarifas, '
+                 'no una atribución al precio del combustible.</p>')
+    evidence = booking_window_evidence(rows, run_date)
+    if evidence['status'] == 'insufficient':
+        html += (f'<p style="font-size:12px;color:#64748b">'
+                 f'<b>Antelación óptima: todavía no calibrada.</b> '
+                 f'{evidence["mature_trips"]} viajes finalizados con al menos '
+                 f'tres intervalos de reserva observados '
+                 f'(mínimo inicial {evidence["minimum_needed"]}). '
+                 'Hasta entonces no es fiable recomendar comprar a '
+                 '30, 60, 90 o 180 días basándose en nuestra muestra.</p>')
+    else:
+        html += ('<p style="font-size:12px"><b>Intervalos con mejor '
+                 'resultado histórico observado</b> '
+                 '(sin garantía de mínimos futuros):</p>')
+        for item in evidence['bands'][:3]:
+            first, last = item['range_days']
+            html += (f'<p style="font-size:12px;margin:3px 0">'
+                     f'{first}–{last} días antes · '
+                     f'{item["median_above_observed_best_pct"]:.1f} % '
+                     f'sobre el mínimo observado de cada viaje · '
+                     f'{item["journeys"]} trayectorias.</p>')
+    html += ('<p style="font-size:10px;color:#64748b;margin:5px 0 0">'
+             'Análisis descriptivo, sin información futura ni promesa '
+             'de tarifa disponible. Los patrones estacionales requieren '
+             'varios meses y las ventanas de compra requieren viajes '
+             'cuyas fechas ya hayan pasado. El modelo no reserva vuelos.</p>'
+             '</section>')
+    return html
+
+
 def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=None,
-                      family_plan=None, horizon_tracking=None, daily_saturdays=()):
+                      family_plan=None, horizon_tracking=None, daily_saturdays=(),
+                      market_history=None):
     diagnostics = diagnostics or {}
     decisions = decisions or {}
     pairs = sorted(pair for pair in set(pairs or [(r['outbound'], r['inbound']) for r in rows])
@@ -300,6 +395,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
     # cohort), rather than only the first eight daily-surveillance weekends.
     html += render_priority_digest(run_date, coverage, trips, decisions,
                                    tracking=horizon_tracking, family_plan=family_plan)
+    html += _market_learning_panel(run_date, coverage, market_history)
     # Only the detailed flight cards are limited to close daily coverage.
     if daily_saturdays:
         daily = set(daily_saturdays)
