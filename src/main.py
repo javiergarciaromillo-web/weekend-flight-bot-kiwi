@@ -9,7 +9,7 @@ from src.horizon import monitoring_plan
 from src.scrapers.google_flights_ui import search_google_flights
 from src.report import build_html_report
 from src.emailer import send_email_html
-from src.store import init_db, save_weekend_snapshot, get_latest_learning_opportunities, get_horizon_tracking
+from src.store import init_db, save_weekend_snapshot, get_latest_learning_opportunities, get_horizon_tracking, get_market_learning_history
 from src.store import save_flight_observations, record_booking_decisions
 from src.family import joined_pairs, load_plan
 from src.learning import save_sampled_weekends
@@ -71,9 +71,11 @@ def main() -> None:
 
     print("[INFO] Building report...")
     radar = get_horizon_tracking(visible_saturdays)
+    market_history = get_market_learning_history(run_date)
     html = build_html_report(run_date, rows, pairs=pairs, diagnostics=diagnostics,
                              decisions=decisions, family_plan=family_plan,
-                             horizon_tracking=radar, daily_saturdays=daily_saturdays)
+                             horizon_tracking=radar, daily_saturdays=daily_saturdays,
+                             market_history=market_history)
 
     # Retain the exact report and source observations for review from this chat.
     report_dir = Path('data/report')
