@@ -93,7 +93,7 @@ def render_priority_digest(run_date, coverage, trips, decisions,
 
     drop_by_week = {}
     for trip in trips:
-        if (trip['total'] is None or trip['delta'] is None
+        if (trip.get('total') is None or trip.get('delta') is None
                 or trip.get('count', 0) < 2):
             continue
         sat = weekend_of(trip['outbound'])
