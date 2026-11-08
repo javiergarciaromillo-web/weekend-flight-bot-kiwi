@@ -74,7 +74,7 @@ def render_priority_digest(run_date, coverage, trips, decisions,
         if not cheapest:
             continue
         saturday = w['weekend']
-        for choice in w['choices']:
+        for choice in w.get('choices', [cheapest]):
             if choice.get('total') is None:
                 continue
             action = decisions.get((choice['outbound'], choice['inbound']), {})
