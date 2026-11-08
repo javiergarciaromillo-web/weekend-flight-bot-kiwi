@@ -55,6 +55,56 @@ class PrioritiesTests(unittest.TestCase):
         self.assertIn('Fin de semana sáb. 24/04', html)
         self.assertIn('Cierre navideño', html)
 
+    def test_favourable_alternative_is_not_hidden_by_cheaper_stable_pattern(self):
+        sat = date(2027, 2, 20)
+        cheapest = dict(outbound=date(2027, 2, 19), inbound=date(2027, 2, 22),
+                        total=159, out=[], inc=[])
+        favourable = dict(outbound=date(2027, 2, 18), inbound=date(2027, 2, 22),
+                          total=192, out=[], inc=[])
+        w = dict(weekend=sat, state='unknown', best=cheapest,
+                 choices=[cheapest, favourable],
+                 decision={'action': 'ESPERAR CON LÍMITE'})
+        signals = {
+            (cheapest['outbound'], cheapest['inbound']): {
+                'action': 'ESPERAR CON LÍMITE'},
+            (favourable['outbound'], favourable['inbound']): {
+                'action': 'CONSIDERAR COMPRA',
+                'reason': '40 € por debajo de la mediana observada',
+                'saving_vs_median': 40},
+        }
+        html = render_priority_digest(
+            date(2026, 11, 8), [w], [cheapest, favourable], signals,
+            tracking=[], family_plan={'required_from': '2027-02-01'})
+        self.assertIn('BAJADA DESTACADA EN ALTERNATIVA', html)
+        self.assertIn('192 €', html)
+        self.assertIn('159 €', html)
+        self.assertIn('33 € más', html)
+        self.assertIn('40 € por debajo', html)
+        self.assertNotIn('Sin señales de compra justificadas por ahora', html)
+
+    def test_no_doubled_signal_for_one_weekend(self):
+        sat = date(2027, 2, 13)
+        first = dict(outbound=date(2027, 2, 11), inbound=date(2027, 2, 15),
+                     total=281, out=[], inc=[])
+        second = dict(outbound=date(2027, 2, 11), inbound=date(2027, 2, 14),
+                      total=298, out=[], inc=[])
+        cheapest = dict(outbound=date(2027, 2, 12), inbound=date(2027, 2, 15),
+                        total=133, out=[], inc=[])
+        coverage = [dict(weekend=sat, state='unknown', best=cheapest,
+                         choices=[first, second, cheapest])]
+        decisions = {
+            (first['outbound'], first['inbound']): {
+                'action': 'CONSIDERAR COMPRA', 'reason': '33 € menos'},
+            (second['outbound'], second['inbound']): {
+                'action': 'CONSIDERAR COMPRA', 'reason': '35 € menos'}}
+        html = render_priority_digest(
+            date(2026, 11, 8), coverage, [], decisions,
+            tracking=[], family_plan={'required_from': '2027-02-01'})
+        self.assertEqual(html.count('BAJADA DESTACADA EN ALTERNATIVA'), 1)
+        self.assertIn('281 €', html)
+        self.assertIn('148 € más', html)
+        self.assertNotIn('298 €', html)
+
     def test_old_radar_quotes_never_presented_as_checked_today(self):
         html = render_priority_digest(
             date(2026, 10, 26), [], [], {},
