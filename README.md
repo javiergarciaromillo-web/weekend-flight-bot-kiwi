@@ -20,6 +20,18 @@ El informe comienza con los ocho fines de semana de seguimiento diario, agrupado
 
 Las valoraciones describen la distancia al mínimo observado; no predicen precios ni recomiendan comprar. Se necesitan al menos cinco fechas con precio completo para valorar el histórico. Las ejecuciones repetidas sustituyen la observación del mismo día. El histórico comparable empieza el 20 de octubre de 2026, al incorporar ventanas desplazadas por festivos: las observaciones anteriores se conservan, pero no se usan para calcular mínimos o bajadas con estos filtros.
 
+## Aprendizaje contextual de precios y momento de reserva
+
+El objetivo no es buscar únicamente bajadas frente al precio de ayer. Se distinguen:
+
+1. **Valoración contextual del precio actual:** se compara con otras fechas de viaje independientes que tienen el mismo patrón de días de ida/vuelta, la misma clasificación de festivos y una antelación de reserva dentro del mismo tramo. Primero se buscan meses de viaje próximos (±1 mes); si hay menos de **6 fines de semana independientes**, se intenta una referencia general y se etiqueta explícitamente **«estacionalidad no calibrada»**. No cuentan como seis muestras seis consultas repetidas del mismo fin de semana. El «precio competitivo» es información descriptiva; no implica comprar automáticamente.
+2. **Dirección del mercado:** se comparan las mismas combinaciones de ida y vuelta observadas en los últimos 3 días con las observadas 4–10 días antes. Se necesita una muestra de al menos seis fines de semana distintos. Esto controla parcialmente el calendario de viaje, pero **no identifica qué causa** los cambios ni predice las tarifas.
+3. **Aprendizaje de antelación óptima:** únicamente se evalúan trayectorias de viajes cuya salida ya ocurrió, con observaciones en **al menos tres tramos distintos de antelación**. Son necesarios al menos **ocho viajes completos e independientes**, de temporada (±1 mes), patrón de ida/vuelta y tipo festivo similares, así como evidencia suficiente por tramo. La estimación se expresa como diferencia respecto al mínimo **observado**, no respecto al verdadero mínimo de mercado. Sin datos suficientes, el informe declara **«todavía no calibrada»**, en lugar de recomendar arbitrariamente 30/60/90/180 días.
+4. **Factores externos para una fase posterior:** los costes del queroseno, la oferta de asientos, la demanda y las vacaciones escolares pueden afectar tarifas. El monitor semanal de IATA (https://www.iata.org/en/publications/economics/fuel-monitor) es un candidato para contextualizar costes, pero su proveedor Platts no ofrece histórico libre en esa página. **Actualmente no se importan datos de queroseno ni se atribuyen subidas a ese factor.** Solo se incorporarán indicadores con datos accesibles, fechas verificables y suficiente histórico para evaluar si mejoran el resultado.
+5. **Validación futura:** analizar en modo cronológico sin mirar precios futuros, y medir cuánto más se habría pagado frente al mínimo efectivamente observado cuando el viaje ya haya pasado. No entrenar ni anunciar ventanas óptimas a partir de vuelos de 2027 todavía no realizados.
+
+El módulo `src/market_learning.py` y la consulta histórica `src/store.py:get_market_learning_history` realizan las tres primeras lecturas. Cada informe muestra el estado de aprendizaje y los precios contextuales disponibles, sin sustituir los límites de decisión provisionales ni comprar vuelos automáticamente.
+
 ## Ejecución local
 
 ```bash
