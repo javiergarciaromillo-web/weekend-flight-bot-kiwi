@@ -418,6 +418,29 @@ def record_booking_decisions(run_date, rows, pairs, diagnostics):
     return decisions
 
 
+
+def get_market_learning_history(as_of, since='2026-10-20'):
+    """Read historical, versioned fare baskets for context/lead-time analysis.
+
+    Includes only quotes strictly earlier than the requested day, to prevent
+    same-day selection and any future-record leakage into recommendations.
+    """
+    from src.decisions import FILTER_VERSION
+    with get_conn() as conn:
+        rows = conn.execute(
+            """SELECT run_date, outbound, inbound, price, coverage_complete,
+                      holiday, filter_version
+               FROM booking_decisions
+               WHERE filter_version=? AND run_date>=? AND run_date<?
+                 AND price IS NOT NULL AND coverage_complete=1
+               ORDER BY run_date, outbound, inbound""",
+            (FILTER_VERSION, str(since), str(as_of))
+        ).fetchall()
+    return [dict(run_date=r[0], outbound=r[1], inbound=r[2],
+                 price=r[3], coverage_complete=bool(r[4]),
+                 holiday=bool(r[5]), filter_version=r[6]) for r in rows]
+
+
 def get_horizon_tracking(saturdays, since=None):
     """Latest actually observed fare for each target family weekend.
 
