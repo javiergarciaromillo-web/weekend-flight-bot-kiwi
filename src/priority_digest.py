@@ -64,16 +64,32 @@ def render_priority_digest(run_date, coverage, trips, decisions,
     plan = family_plan or {}
     active = [w for w in coverage if w['state'] not in NON_TRAVEL]
     active_sats = {w['weekend'] for w in active}
-    signals = []
+    # Consider *every* eligible alternative, not only the lowest-priced
+    # itinerary. The prior implementation hid genuine statistical buy signals
+    # for Thursday departures whenever a cheaper Friday flight was stable.
+    # Do not promote a two-weekend stay as a normal one-weekend ticket.
+    signals_by_week = {}
     for w in active:
-        best = w.get('best')
-        d = w.get('decision') or {}
-        if not best:
+        cheapest = w.get('best')
+        if not cheapest:
             continue
-        if d.get('action') in ('CONSIDERAR COMPRA', 'CERRAR DECISIÓN'):
-            signals.append((0 if d['action'] == 'CERRAR DECISIÓN' else 1,
-                            w['weekend'], w, d))
-    signals.sort(key=lambda x: (x[0], x[1]))
+        saturday = w['weekend']
+        for choice in w['choices']:
+            if choice.get('total') is None:
+                continue
+            action = decisions.get((choice['outbound'], choice['inbound']), {})
+            if action.get('action') not in ('CONSIDERAR COMPRA', 'CERRAR DECISIÓN'):
+                continue
+            tt_dates, _ = trip_work_dates(choice)
+            if assess_remote_plan(tt_dates)['requires_special_authorisation']:
+                continue
+            rank = (0 if action['action'] == 'CERRAR DECISIÓN' else 1,
+                    choice['total'] - cheapest['total'],
+                    choice['total'])
+            item = (rank, saturday, choice, cheapest, w, action, tt_dates)
+            if saturday not in signals_by_week or rank < signals_by_week[saturday][0]:
+                signals_by_week[saturday] = item
+    signals = sorted(signals_by_week.values(), key=lambda x: (x[0][0], x[1], x[0][1]))
 
     drop_by_week = {}
     for trip in trips:
@@ -114,16 +130,29 @@ def render_priority_digest(run_date, coverage, trips, decisions,
     html += '<h3 style="font-size:14px;margin:12px 0 5px">Decisiones de compra</h3>'
     if not signals:
         html += '<p style="font-size:12px;margin:2px 0">Sin señales de compra justificadas por ahora.</p>'
-    for _, sat, w, d in signals[:3]:
-        best = w['best']
-        tt = trip_work_dates(best)[0]
-        label = 'LÍMITE PRUDENTE' if d['action'] == 'CERRAR DECISIÓN' else 'PRECIO FAVORABLE'
-        html += (f'<p style="font-size:12px;margin:7px 0"><b>{label} · fin de semana {_day(sat)}</b>'
-                 f'<br>{_day(best["outbound"])} → {_day(best["inbound"])} · '
-                 f'<b>{best["total"]:.0f} €</b> · {len(tt)} TT estimados. '
-                 f'{escape(d.get("reason", ""))}</p>')
+    for _, sat, choice, cheapest, w, d, tt in signals[:3]:
+        premium = choice['total'] - cheapest['total']
+        action = d['action']
+        label = ('LÍMITE PRUDENTE' if action == 'CERRAR DECISIÓN'
+                 else 'BAJADA DESTACADA EN ALTERNATIVA' if premium > 0
+                 else 'PRECIO FAVORABLE RESPECTO A SU HISTÓRICO')
+        best_tt = len(trip_work_dates(cheapest)[0])
+        html += (f'<div style="font-size:12px;padding:9px 0;border-bottom:1px solid #e2e8f0">'
+                 f'<b>{label} · fin de semana {_day(sat)}</b>'
+                 f'<br>{_day(choice["outbound"])} → {_day(choice["inbound"])} · '
+                 f'<b>{choice["total"]:.0f} €</b> · {len(tt)} TT estimados. '
+                 f'{escape(d.get("reason", ""))}')
+        if premium > 0:
+            html += (f'<br><b>Comparación importante:</b> la alternativa más barata '
+                     f'cuesta {cheapest["total"]:.0f} € '
+                     f'({_day(cheapest["outbound"])} → {_day(cheapest["inbound"])}; '
+                     f'{best_tt} TT). La opción que ha bajado cuesta '
+                     f'<b>{premium:.0f} € más</b>; '
+                     'que haya bajado no significa que debas escogerla.')
         if w['state'] == 'unknown':
-            html += '<p style="font-size:11px;color:#92400e">Confirmar antes si el viaje es necesario o ya está reservado.</p>'
+            html += ('<br><span style="color:#92400e">Confirmar antes si '
+                     'el viaje es necesario o ya está reservado.</span>')
+        html += '</div>'
 
     html += '<h3 style="font-size:14px;margin:14px 0 5px">Mayores bajadas verificables</h3>'
     if not drops:
