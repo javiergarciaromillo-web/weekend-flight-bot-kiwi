@@ -13,13 +13,15 @@ from src.store import init_db, save_weekend_snapshot, get_latest_learning_opport
 from src.store import save_flight_observations, record_booking_decisions
 from src.family import joined_pairs, load_plan
 from src.learning import save_sampled_weekends
+from src.puente import local_feedback, apply_feedback, feedback_html
 
 
 def main() -> None:
     run_date = datetime.now(ZoneInfo("Europe/Amsterdam")).date()
 
     init_db()
-    family_plan = load_plan()
+    feedback = local_feedback()
+    family_plan = apply_feedback(load_plan(), feedback)
 
     # Search the family period even before it enters the usual seven-week horizon.
     planning_start = max(run_date, date.fromisoformat(family_plan['required_from'])) if family_plan.get('required_from') else run_date
@@ -76,6 +78,10 @@ def main() -> None:
                              decisions=decisions, family_plan=family_plan,
                              horizon_tracking=radar, daily_saturdays=daily_saturdays,
                              market_history=market_history)
+
+    personal = feedback_html(feedback)
+    if personal:
+        html = html.replace('</body>', personal + '</body>') if '</body>' in html else html + personal
 
     # Retain the exact report and source observations for review from this chat.
     report_dir = Path('data/report')
