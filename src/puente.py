@@ -1,4 +1,4 @@
-"""Optional private Site bridge. Existing email, queries and SQLite remain authoritative."""
+"""Optional private KAIROS Site bridge. Existing email, queries and SQLite remain authoritative."""
 import argparse
 from datetime import date, datetime, timezone
 import hashlib
@@ -28,7 +28,7 @@ def validate_feedback(data):
 def local_feedback():
     try: return validate_feedback(json.loads(FEEDBACK_PATH.read_text())) if FEEDBACK_PATH.exists() else {}
     except (OSError,ValueError,TypeError,KeyError,AttributeError):
-        print('[WARN] Invalid Puente feedback ignored; original bot continues.')
+        print('[WARN] Invalid KAIROS feedback ignored; original bot continues.')
         return {}
 
 def apply_feedback(plan, feedback):
@@ -37,7 +37,7 @@ def apply_feedback(plan, feedback):
 
 def feedback_html(feedback):
     if not feedback.get('choices') and not feedback.get('weekends'): return ''
-    parts=['<section><h2>Tus decisiones en Puente</h2><p>Preferencias personales; comprar ahora no equivale a una reserva. Umbrales de tarifa ida y vuelta, sin extras desconocidos.</p>']
+    parts=['<section><h2>Tus decisiones en KAIROS</h2><p>Preferencias personales; comprar ahora no equivale a una reserva. Umbrales de tarifa ida y vuelta, sin extras desconocidos.</p>']
     for key,c in sorted(feedback.get('choices',{}).items()):
         parts.append(f'<p><b>{escape(key.replace("|"," → "))}: {escape(c["action"])}</b>')
         if c.get('threshold') is not None: parts.append(f' · Umbral: {c["threshold"]:.2f} €')
@@ -56,12 +56,12 @@ def _request(path,payload=None):
 def pull():
     FEEDBACK_PATH.unlink(missing_ok=True)
     if not os.environ.get('PUENTE_SITE_TOKEN'):
-        print('[INFO] Puente not configured; original bot unchanged.');return
+        print('[INFO] KAIROS not configured; original bot unchanged.');return
     state=_request('/api/bridge')
     feedback=validate_feedback(state.get('feedback') or {})
     FEEDBACK_PATH.parent.mkdir(parents=True,exist_ok=True)
     FEEDBACK_PATH.write_text(json.dumps(feedback,ensure_ascii=False))
-    print('[INFO] Puente preferences loaded; revision',state.get('feedbackVersion',0))
+    print('[INFO] KAIROS preferences loaded; revision',state.get('feedbackVersion',0))
 
 def build_bundle(report,db_path=Path('data/prices.db')):
     from src.market_learning import comparable_price,booking_window_evidence,market_movement
@@ -97,11 +97,11 @@ def upload_bundle(bundle):
         values=bundle[kind]
         for i in range(0,len(values),40): _request('/api/bridge',{'kind':kind,'run_id':rid,'items':values[i:i+40]})
     _request('/api/bridge',{'kind':'commit','run_id':rid,'meta':bundle['meta'],'trip_count':len(bundle['trips']),'history_count':len(bundle['history']),'digest':hashlib.sha256(json.dumps(bundle,sort_keys=True,default=str).encode()).hexdigest()})
-    print('[INFO] Puente synchronized:',len(bundle['trips']),'journeys;',len(bundle['history']),'historical decisions.')
+    print('[INFO] KAIROS synchronized:',len(bundle['trips']),'journeys;',len(bundle['history']),'historical decisions.')
 
 def push():
     if not os.environ.get('PUENTE_SITE_TOKEN'):
-        print('[INFO] Puente not configured; email and DB unchanged.');return
+        print('[INFO] KAIROS not configured; email and DB unchanged.');return
     path=Path('data/report/report.json')
     if not path.exists(): raise RuntimeError('No current report')
     upload_bundle(build_bundle(json.loads(path.read_text())))
@@ -110,5 +110,5 @@ if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('operation',choices=['pull','push']);args=p.parse_args()
     try: (pull if args.operation=='pull' else push)()
     except Exception as exc:
-        print('[WARN] Puente synchronization failed:',type(exc).__name__,'. Email bot remains independent.')
+        print('[WARN] KAIROS synchronization failed:',type(exc).__name__,'. Email bot remains independent.')
         raise SystemExit(1)
