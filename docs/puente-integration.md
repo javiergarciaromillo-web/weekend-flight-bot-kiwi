@@ -1,8 +1,10 @@
-# Private Puente integration
+# Private KAIROS integration
+
+KAIROS is the public-facing name of the private travel Site. Existing technical integration identifiers, environment variables, API headers, and the Site URL intentionally retain the legacy Puente names to preserve compatibility.
 
 The existing bot remains authoritative: searches, 300-day horizon, holidays,
 family coverage, TT rules, learning, SQLite history, artifacts and SMTP email
-are preserved. No new flight search or duplicate email is initiated by Puente.
+are preserved. No new flight search or duplicate email is initiated by KAIROS.
 
 ## Activate
 Set the repository Actions secret `PUENTE_SITE_TOKEN` to the private Site's
