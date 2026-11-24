@@ -1,6 +1,6 @@
 """Staggered monitoring of every family weekend, beginning far before departure.
 
-A 300-day horizon covers early fare releases. Sampling is per target weekend
+A 365-day horizon covers early fare releases. Sampling is per target weekend
 and spread over the seven calendar weekdays so daily jobs stay affordable.
 Never present unqueried weeks as live fare checks.
 """
@@ -13,7 +13,7 @@ from src.planner import generate_weekend_pairs
 from src.travel_plan import confirmed_no_flight
 
 
-HORIZON_DAYS = 300
+HORIZON_DAYS = 365
 DAILY_WEEKS = 8
 TWICE_WEEKLY_UNTIL_WEEKS = 20
 

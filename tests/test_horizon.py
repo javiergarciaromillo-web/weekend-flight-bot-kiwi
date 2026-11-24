@@ -1,4 +1,4 @@
-"""Ten-month monitoring policy and truthful dated price radar."""
+"""Twelve-month monitoring policy and truthful dated price radar."""
 import tempfile
 import unittest
 from datetime import date, timedelta
@@ -15,14 +15,31 @@ class HorizonTests(unittest.TestCase):
     def test_first_eight_family_weekends_daily_before_start(self):
         today, family = date(2026, 10, 20), date(2027, 2, 1)
         pairs, visible, daily, sampled = monitoring_plan(today, family)
-        self.assertEqual(HORIZON_DAYS, 300)
+        self.assertEqual(HORIZON_DAYS, 365)
         self.assertEqual(visible[0], date(2027, 2, 6))
         self.assertEqual(len(daily), 8)
         self.assertTrue(set(daily).issubset(sampled))
         self.assertTrue(all(out >= family for out, inc in pairs))
         self.assertTrue(all(out < inc for out, inc in pairs))
         self.assertIn((date(2027, 2, 4), date(2027, 2, 7)), pairs)
-        self.assertTrue(visible[-1] <= today + timedelta(days=300))
+        self.assertTrue(visible[-1] <= today + timedelta(days=365))
+
+    def test_newly_visible_months_keep_staggered_checks_and_explicit_exclusions(self):
+        run = date(2026, 11, 24)
+        family = date(2027, 2, 1)
+        november = date(2027, 11, 6)
+        selections = []
+        for offset in range(7):
+            pairs, visible, daily, due = monitoring_plan(run + timedelta(days=offset), family)
+            self.assertIn(november, visible)
+            self.assertNotIn(november, daily)
+            self.assertTrue(all(sat <= run + timedelta(days=offset + HORIZON_DAYS)
+                                for sat in visible))
+            selections.append(set(due))
+        self.assertEqual(sum(november in due for due in selections), 2)
+        plan = {'weekends': {'2027-11-06': 'holiday_break'}}
+        _, visible, _, _ = monitoring_plan(run, family, plan)
+        self.assertNotIn(november, visible)
 
     def test_regular_long_range_cadence_each_calendar_week(self):
         # Fix the target weekends and vary only the run weekday within one week.
@@ -30,7 +47,7 @@ class HorizonTests(unittest.TestCase):
         family = date(2027, 2, 1)
         near = date(2027, 2, 6)
         mid = date(2027, 4, 17)   # Ordinary week >8 and <20 weeks away
-        far = date(2027, 8, 7)    # >20 weeks away, inside 300d
+        far = date(2027, 8, 7)    # >20 weeks away, inside 365d
         results = []
         for offset in range(7):
             run_day = start + timedelta(days=offset)

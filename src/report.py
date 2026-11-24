@@ -11,6 +11,7 @@ from src.budget import (REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, MAX_CONSECUTIVE_REM
                         annual_tt_outlook)
 from src.planner import allowed_pair, FILTER_HISTORY_START
 from src.priority_digest import render_priority_digest
+from src.horizon import HORIZON_DAYS
 from src.market_learning import comparable_price, booking_window_evidence, market_movement
 
 
@@ -80,7 +81,7 @@ def _horizon_radar(tracking, daily_saturdays=()):
     if not future:
         return ''
     html = ('<h2 style="font-size:18px;margin-top:26px">Radar de precios a largo plazo</h2>'
-            '<p>Seguimiento de 300 días. Las fechas lejanas se consultan 2–3 veces'
+            f'<p>Seguimiento de {HORIZON_DAYS} días. Las fechas lejanas se consultan 2–3 veces'
             ' por semana: los precios anteriores no garantizan disponibilidad actual.</p>')
     current_month = None
     for item in future:
@@ -406,7 +407,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
             f'{len(complete)}/{len(trips)} viajes con precio completo</p>'
             '')
     coverage = build_coverage(trips, decisions, family_plan)
-    # Purchase alerts must include ALL sampled weeks (including the 300-day
+    # Purchase alerts must include ALL sampled weeks (including the full-horizon
     # cohort), rather than only the first eight daily-surveillance weekends.
     html += render_priority_digest(run_date, coverage, trips, decisions,
                                    tracking=horizon_tracking, family_plan=family_plan)
@@ -517,7 +518,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
              'Cambio de precio = comparación con la última observación anterior. '
              'El mínimo solo se muestra a partir de 5 días con precio completo.<br>'
              'Vuelos directos de Vueling y Transavia; KLM también en las opciones habituales vía AMS. '
-             'Vigilancia 300 días: primeras 8 semanas familiares y próximas 8 semanas, diaria; '
+             f'Vigilancia {HORIZON_DAYS} días: primeras 8 semanas familiares y próximas 8 semanas, diaria; '
              'de 9 a 20 semanas, tres veces por semana; fechas más lejanas, dos veces por semana. '
              'Los fines de semana con festivos NCIA se vigilan diariamente a menos de 110 días, '
              'y tres veces por semana antes de ese horizonte. '
