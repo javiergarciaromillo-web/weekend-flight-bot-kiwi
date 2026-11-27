@@ -183,3 +183,19 @@ days; early Friday flights may require another day.
 The 21/42-day rules remain explicitly provisional **stop-waiting limits**, not a
 recommendation to wait until those dates. Validate and replace them using weekly
 coverage outcomes; airline/flight-specific learned timing remains future work.
+
+
+### Señales de campañas en KAIROS
+
+`config/promotions.json` conserva anuncios oficiales verificados, fechas de reserva,
+rutas y fechas de viaje conocidas. `src/promotions.py` exporta al calendario una
+señal de elegibilidad de ruta, nunca una garantía de descuento del vuelo concreto.
+Una bajada requiere al menos 3 días completos de histórico de las mismas fechas
+y versión de filtros, y un ahorro de al menos 20 EUR y 15 % frente a la mediana.
+La referencia usa los 30 días previos al inicio de las campañas activas; fuera de
+campaña usa los 30 días previos al informe. No usa observaciones futuras.
+El email añade las fuentes y condiciones generales; los marcadores y el análisis
+por fechas están en KAIROS. Se mantienen las búsquedas, decisiones y envío diario.
+Los descuentos Prime privados no se estiman ni se aplican a las tarifas públicas.
+Los anuncios caducan automáticamente al finalizar su ventana; nuevos anuncios
+necesitan fuente y revisión explícita, no se inventan para años posteriores.

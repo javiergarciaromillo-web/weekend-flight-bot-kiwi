@@ -70,6 +70,7 @@ def build_bundle(report,db_path=Path('data/prices.db')):
     from src.holidays import holiday_dates
     from src.planner import allowed_pair
     from src.decisions import FILTER_VERSION,POLICY_VERSION
+    from src.promotions import active_campaigns,promotion_signal
     with sqlite3.connect(db_path) as conn:
         conn.row_factory=sqlite3.Row
         history=[dict(r) for r in conn.execute('SELECT * FROM booking_decisions ORDER BY run_date,outbound,inbound')]
@@ -86,9 +87,11 @@ def build_bundle(report,db_path=Path('data/prices.db')):
         trip=dict(outbound=out,inbound=inc,out=legs['outbound'],inc=legs['inbound'])
         days,notes=trip_work_dates(trip);holiday=bool(holiday_dates(out,inc))
         trips.append(dict(id=a+'|'+b,outbound=a,inbound=b,fare=fare,total=None,extras_status='unknown',legs=legs,decision=decisions.get((a,b)),market=comparable_price(out,inc,fare,holiday,past,as_of),booking_window=booking_window_evidence(past,as_of,travel_month=out.month,weekday_pattern=(out.weekday(),inc.weekday()),holiday=holiday),tt=assess_remote_plan(days),workdates=[str(d) for d in days],tt_notes=notes,annual=projected_annual_tt(days,[weekend_of(out)],outlook),weekend=str(weekend_of(out)),holiday=holiday))
+    for trip in trips:
+        trip['promotion'] = promotion_signal(trip, history, as_of)
     rid=str(os.environ.get('GITHUB_RUN_ID') or 'backfill-'+report['run_date'])+'-'+str(os.environ.get('GITHUB_RUN_ATTEMPT','1'))
     meta={k:v for k,v in report.items() if k not in ('flights','decisions')}
-    meta.update(run_id=rid,source_repository='javiergarciaromillo-web/weekend-flight-bot-kiwi',source_commit=os.environ.get('GITHUB_SHA'),imported_at=datetime.now(timezone.utc).isoformat(),policy_version=POLICY_VERSION,filter_version=FILTER_VERSION,market_movement=market_movement(past,as_of),annual_outlook=outlook,feedback_revision=local_feedback().get('revision',0),fuel={'status':'unknown','note':'Sin serie de combustible validada.'})
+    meta.update(promotion_campaigns=active_campaigns(as_of),run_id=rid,source_repository='javiergarciaromillo-web/weekend-flight-bot-kiwi',source_commit=os.environ.get('GITHUB_SHA'),imported_at=datetime.now(timezone.utc).isoformat(),policy_version=POLICY_VERSION,filter_version=FILTER_VERSION,market_movement=market_movement(past,as_of),annual_outlook=outlook,feedback_revision=local_feedback().get('revision',0),fuel={'status':'unknown','note':'Sin serie de combustible validada.'})
     return dict(meta=meta,trips=trips,history=history)
 
 def upload_bundle(bundle):

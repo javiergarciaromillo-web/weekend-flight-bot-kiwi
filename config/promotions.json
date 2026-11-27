@@ -1,0 +1,42 @@
+[
+  {
+    "id": "transavia-bf-2026",
+    "name": "Black Friday Transavia",
+    "provider": "Transavia",
+    "booking_from": "2026-11-24",
+    "booking_until": "2026-12-01",
+    "travel_from": "2026-12-01",
+    "travel_until": "2027-03-31",
+    "routes": [["RTM", "BCN"]],
+    "source": "https://www.transavia.com/campaigns/nl-be/black-friday",
+    "terms": "https://www.transavia.com/nl-NL/actievoorwaarden-black-friday-2026/",
+    "verified_at": "2026-11-27",
+    "note": "Ruta RTM–BCN anunciada en campaña; plazas y tarifa concreta por verificar. El equipaje de 20 kg anunciado corresponde a paquetes Transavia Holidays, no a vuelos sueltos."
+  },
+  {
+    "id": "vueling-bf-2026",
+    "name": "Black Friday Vueling",
+    "provider": "Vueling",
+    "booking_from": "2026-11-27",
+    "booking_until": "2026-11-29",
+    "travel_from": null,
+    "travel_until": null,
+    "routes": [],
+    "source": "https://www.vueling.com/en/promotional-flights/",
+    "verified_at": "2026-11-27",
+    "note": "Campaña anunciada hasta el domingo 29/11. Fechas y rutas aplicables sin verificar; no se asigna un descuento a vuelos concretos."
+  },
+  {
+    "id": "edreams-travel-tuesday-2026",
+    "name": "Travel Tuesday eDreams",
+    "provider": "eDreams",
+    "booking_from": "2026-11-20",
+    "booking_until": "2026-12-01",
+    "travel_from": null,
+    "travel_until": null,
+    "routes": [],
+    "source": "https://www.edreams.es/our-brand/news/travel-tuesday-ofertas-vuelos-hoteles/",
+    "verified_at": "2026-11-27",
+    "note": "Campaña del intermediario. El bot no consulta tarifas privadas Prime; un descuento Prime no acredita por sí solo descuento BF adicional."
+  }
+]

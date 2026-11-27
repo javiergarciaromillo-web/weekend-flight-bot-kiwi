@@ -12,6 +12,7 @@ from src.budget import (REMOTE_WORK_DAYS, ANNUAL_LEAVE_DAYS, MAX_CONSECUTIVE_REM
 from src.planner import allowed_pair, FILTER_HISTORY_START
 from src.priority_digest import render_priority_digest
 from src.horizon import HORIZON_DAYS
+from src.promotions import render_promotions
 from src.market_learning import comparable_price, booking_window_evidence, market_movement
 
 
@@ -411,6 +412,7 @@ def build_html_report(run_date, rows, pairs=None, diagnostics=None, decisions=No
     # cohort), rather than only the first eight daily-surveillance weekends.
     html += render_priority_digest(run_date, coverage, trips, decisions,
                                    tracking=horizon_tracking, family_plan=family_plan)
+    html += render_promotions(run_date, trips, market_history)
     html += _market_learning_panel(run_date, coverage, market_history)
     # Only the detailed flight cards are limited to close daily coverage.
     if daily_saturdays:
