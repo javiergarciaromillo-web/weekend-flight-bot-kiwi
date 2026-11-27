@@ -305,7 +305,8 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(build.call_args.kwargs['diagnostics'][key], 'ok')
         self.assertEqual(payload['queries'][0]['status'], 'ok')
         self.assertEqual(len(payload['flights']), 2)
-        self.assertEqual(payload['monitoring_days'], 300)
+        self.assertEqual(payload['monitoring_days'], 365)
+        self.assertIn('active_promotions', payload)
         email.assert_called_once()
 
 
