@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from src.horizon import monitoring_plan
+from src.horizon import HORIZON_DAYS, active_promotions, monitoring_plan
 from src.scrapers.google_flights_ui import search_google_flights
 from src.report import build_html_report
 from src.emailer import send_email_html
@@ -26,7 +26,10 @@ def main() -> None:
     # Search the family period even before it enters the usual seven-week horizon.
     planning_start = max(run_date, date.fromisoformat(family_plan['required_from'])) if family_plan.get('required_from') else run_date
 
-    print("[INFO] Planning rolling 300-day fare monitoring...")
+    print(f"[INFO] Planning rolling {HORIZON_DAYS}-day fare monitoring...")
+    campaigns = active_promotions(run_date)
+    if campaigns:
+        print(f"[INFO] Enhanced campaign sampling: {campaigns}")
     baseline_pairs, visible_saturdays, daily_saturdays, sampled_saturdays = monitoring_plan(
         run_date, planning_start, family_plan=family_plan,
     )
@@ -79,6 +82,13 @@ def main() -> None:
                              horizon_tracking=radar, daily_saturdays=daily_saturdays,
                              market_history=market_history)
 
+    if campaigns:
+        campaign_note = '<p><strong>KAIROS — vigilancia promocional reforzada:</strong> ' + '; '.join(
+            f'{name} (fechas vigiladas hasta {until.isoformat()})'
+            for name, until in campaigns
+        ) + '. Precios observados, no descuentos garantizados; confirmar tarifa final y equipaje en la aerolínea.</p>'
+        html = html.replace('</body>', campaign_note + '</body>') if '</body>' in html else html + campaign_note
+
     personal = feedback_html(feedback)
     if personal:
         html = html.replace('</body>', personal + '</body>') if '</body>' in html else html + personal
@@ -92,7 +102,9 @@ def main() -> None:
         'run_date': run_date,
         'pairs': pairs,
         'family_plan': family_plan,
-        'monitoring_days': 300,
+        'monitoring_days': HORIZON_DAYS,
+        'active_promotions': [dict(name=name, monitoring_until=until)
+                              for name, until in campaigns],
         'daily_weekends': daily_saturdays,
         'sampled_weekends_today': sampled_saturdays,
         'horizon_tracking': radar,
