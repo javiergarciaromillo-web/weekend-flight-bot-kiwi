@@ -17,6 +17,19 @@ HORIZON_DAYS = 365
 DAILY_WEEKS = 8
 TWICE_WEEKLY_UNTIL_WEEKS = 20
 
+# Temporary sampling overrides, not fare discounts. Dates are Amsterdam-local.
+# Vueling: campaign ends Sunday; monitor through September as a search target,
+# without presuming every route or date qualifies. Transavia: published winter period.
+PROMOTION_WINDOWS = (
+    ('Vueling Black Friday', date(2026, 11, 27), date(2026, 11, 29), date(2027, 9, 30)),
+    ('Transavia Black Friday', date(2026, 11, 27), date(2026, 12, 1), date(2027, 3, 31)),
+)
+
+
+def active_promotions(run_date: date):
+    return [(name, travel_until) for name, start, end, travel_until in PROMOTION_WINDOWS
+            if start <= run_date <= end]
+
 
 def monitoring_plan(run_date: date, planning_start: date, family_plan=None):
     """Return (operational pairs, all target Saturdays, daily Saturdays, due Saturdays).
@@ -48,8 +61,12 @@ def monitoring_plan(run_date: date, planning_start: date, family_plan=None):
     due = set()
     today_bucket = run_date.toordinal() % 7
     priority_holidays = {holiday_weekend(day) for day in HOLIDAYS if day.year == 2027}
+    promotions = active_promotions(run_date)
     for sat in visible:
         days_ahead = (sat - run_date).days
+        if any(sat <= travel_until for _, travel_until in promotions):
+            # Keep campaign-driven samples distinct from the ordinary daily cohort.
+            due.add(sat)
         if sat in daily or days_ahead <= DAILY_WEEKS * 7:
             daily.add(sat)
             due.add(sat)

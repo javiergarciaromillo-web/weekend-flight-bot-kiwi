@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
-from src.horizon import HORIZON_DAYS, monitoring_plan
+from src.horizon import HORIZON_DAYS, monitoring_plan, active_promotions
 from src import store
 from src.learning import save_sampled_weekends
 from src.report import _horizon_radar
@@ -40,6 +40,30 @@ class HorizonTests(unittest.TestCase):
         plan = {'weekends': {'2027-11-06': 'holiday_break'}}
         _, visible, _, _ = monitoring_plan(run, family, plan)
         self.assertNotIn(november, visible)
+
+    def test_black_friday_sampling_expires_and_respects_exclusions(self):
+        family = date(2027, 2, 1)
+        september = date(2027, 9, 4)
+        march = date(2027, 3, 20)
+        excluded = date(2027, 8, 7)
+        plan = {'weekends': {excluded.isoformat(): 'vacation'}}
+        for day in (27, 28, 29):
+            pairs, visible, daily, due = monitoring_plan(date(2026, 11, day), family, plan)
+            self.assertTrue(all(s in due for s in visible if s <= date(2027, 9, 30)))
+            self.assertNotIn(september, daily)
+            self.assertIn(september, due)
+            self.assertNotIn(excluded, visible)
+            self.assertTrue(all(not (out <= excluded <= inc) for out, inc in pairs))
+        for day in (date(2026, 11, 30), date(2026, 12, 1)):
+            _, visible, _, due = monitoring_plan(day, family, plan)
+            self.assertIn(march, due)
+            self.assertTrue(all(s in due for s in visible if s <= date(2027, 3, 31)))
+            self.assertEqual([name for name, _ in active_promotions(day)],
+                             ['Transavia Black Friday'])
+        self.assertEqual(active_promotions(date(2026, 12, 2)), [])
+        self.assertEqual(active_promotions(date(2027, 11, 27)), [])
+        self.assertEqual(sum(september in monitoring_plan(date(2026, 12, 2)
+                             + timedelta(days=i), family)[3] for i in range(7)), 2)
 
     def test_regular_long_range_cadence_each_calendar_week(self):
         # Fix the target weekends and vary only the run weekday within one week.
